@@ -86,5 +86,26 @@ public sealed class SettingsManager
         {
             settings.FileNamePrefix = "snip";
         }
+
+        if (string.IsNullOrWhiteSpace(settings.Theme))
+        {
+            settings.Theme = "System";
+        }
+        else if (!settings.Theme.Equals("System", StringComparison.OrdinalIgnoreCase)
+                 && !settings.Theme.Equals("Light", StringComparison.OrdinalIgnoreCase)
+                 && !settings.Theme.Equals("Dark", StringComparison.OrdinalIgnoreCase))
+        {
+            settings.Theme = "System";
+        }
+
+        if (string.IsNullOrWhiteSpace(settings.Language))
+        {
+            settings.Language = "zh-CN";
+        }
+        else if (!settings.Language.Equals("zh-CN", StringComparison.OrdinalIgnoreCase)
+                 && !settings.Language.Equals("en-US", StringComparison.OrdinalIgnoreCase))
+        {
+            settings.Language = "zh-CN";
+        }
     }
 }

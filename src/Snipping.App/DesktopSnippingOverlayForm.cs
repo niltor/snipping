@@ -1,0 +1,1304 @@
+using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
+using Snipping.Core.Export;
+using Snipping.Core.Settings;
+
+namespace Snipping.App;
+
+public sealed record PinRequestInfo(Bitmap Bitmap, Point ScreenLocation);
+
+public sealed class DesktopSnippingOverlayForm : Form
+{
+    private const int MinSelection = 2;
+
+    private enum Phase { Selecting, Ready, Drawing }
+
+    private enum ResizeHandle { None, TopLeft, Top, TopRight, Right, BottomRight, Bottom, BottomLeft, Left, Move }
+
+    // Dependencies
+    private readonly SnippingSettings _settings;
+    private readonly ExportManager _exportManager;
+
+    // Screen capture (never modified — annotations are rendered as overlays)
+    private Bitmap? _screenBitmap;
+
+    // Selection state (all coordinates in form‑local = bitmap‑pixel space)
+    private Phase _phase = Phase.Selecting;
+    private Point? _selStart;
+    private Rectangle _selection;
+
+    // Selection resize state
+    private ResizeHandle _activeHandle = ResizeHandle.None;
+    private Point _resizeOrigin;
+    private Rectangle _resizeOriginalSel;
+
+    // Annotation state
+    private AnnotationTool _tool = AnnotationTool.Rectangle;
+    private Color _color = Color.Red;
+    private readonly List<AnnotationItem> _annotations = [];
+    private Point? _drawStart;
+    private Point _drawEnd;
+    private List<Point>? _freePoints;
+
+    // Inline text input
+    private TextBox? _textBox;
+    private Panel? _textPanel;
+    private Point _textInputPosition;
+    private float _textFontSize = 18f;
+    private int _editingAnnotationIndex = -1;
+    private bool _textInputManualSize;
+    private bool _textInputDragging;
+    private bool _textInputResizing;
+    private Point _textInputMouseOriginScreen;
+    private Point _textInputPanelOrigin;
+    private Size _textInputPanelSizeOrigin;
+
+    // Mouse tracking for magnifier
+    private Point _lastMousePt;
+
+    // Toolbar
+    private readonly RoundedPanel _toolbar;
+    private readonly List<RoundedButton> _toolBtns = [];
+    private readonly List<RoundedButton> _colorBtns = [];
+    private readonly ToolTip _tip = new() { InitialDelay = 300, ReshowDelay = 200, AutoPopDelay = 4000 };
+
+    // Pin result (set when user presses Ctrl+T)
+    public PinRequestInfo? PinResult { get; private set; }
+
+    // Pin shortcut parsed
+    private readonly bool _pinCtrl, _pinShift, _pinAlt;
+    private readonly Keys _pinKey;
+
+    public DesktopSnippingOverlayForm(SnippingSettings settings, ExportManager exportManager)
+    {
+        _settings = settings;
+        _exportManager = exportManager;
+
+        FormBorderStyle = FormBorderStyle.None;
+        StartPosition = FormStartPosition.Manual;
+        Bounds = SystemInformation.VirtualScreen;
+        TopMost = true;
+        DoubleBuffered = true;
+        KeyPreview = true;
+        ShowInTaskbar = false;
+        BackColor = Color.Black;
+        Cursor = Cursors.Cross;
+
+        _toolbar = new RoundedPanel
+        {
+            Visible = false,
+            Height = 46,
+            BackColor = Color.FromArgb(30, 30, 30),
+            CornerRadius = 10,
+            BorderColor = Color.FromArgb(80, 80, 80),
+            BorderThickness = 1,
+            TintColor = Color.FromArgb(180, 30, 30, 30)
+        };
+        BuildToolbar();
+        Controls.Add(_toolbar);
+
+        ParseShortcut(_settings.PinShortcut, out _pinCtrl, out _pinShift, out _pinAlt, out _pinKey);
+    }
+
+    private static void ParseShortcut(string shortcut, out bool ctrl, out bool shift, out bool alt, out Keys key)
+    {
+        ctrl = shift = alt = false;
+        key = Keys.None;
+        foreach (var part in shortcut.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (part.Equals("Ctrl", StringComparison.OrdinalIgnoreCase) ||
+                part.Equals("Control", StringComparison.OrdinalIgnoreCase)) ctrl = true;
+            else if (part.Equals("Shift", StringComparison.OrdinalIgnoreCase)) shift = true;
+            else if (part.Equals("Alt", StringComparison.OrdinalIgnoreCase)) alt = true;
+            else Enum.TryParse(part, true, out key);
+        }
+    }
+
+    #region Toolbar construction
+
+    private void BuildToolbar()
+    {
+        var x = 8;
+        const int iconSize = 34;
+        const int btnY = 6;
+        const int gap = 2;
+        const int groupGap = 6;
+
+        // ── Tool icon buttons ─────────────────────────────────
+        var tools = new (string tip, AnnotationTool tool, Action<Graphics, Rectangle, Color> icon)[]
+        {
+            ("矩形 (R)",   AnnotationTool.Rectangle, ToolIcons.Rectangle),
+            ("椭圆 (E)",   AnnotationTool.Ellipse,   ToolIcons.Ellipse),
+            ("箭头 (A)",   AnnotationTool.Arrow,      ToolIcons.Arrow),
+            ("直线 (L)",   AnnotationTool.Line,       ToolIcons.Line),
+            ("文字 (T)",   AnnotationTool.Text,       ToolIcons.Text),
+            ("高亮 (H)",   AnnotationTool.Highlight,  ToolIcons.Highlight),
+            ("马赛克 (M)", AnnotationTool.Mosaic,     ToolIcons.Mosaic),
+            ("画笔 (P)",   AnnotationTool.FreeDraw,   ToolIcons.FreeDraw),
+        };
+
+        foreach (var (tip, tool, icon) in tools)
+        {
+            var btn = new RoundedButton
+            {
+                Location = new Point(x, btnY),
+                Size = new Size(iconSize, iconSize),
+                ForeColor = Color.White,
+                CornerRadius = 6,
+                IdleColor = Color.FromArgb(38, 38, 38),
+                HoverColor = Color.FromArgb(55, 55, 55),
+                PressedColor = Color.FromArgb(70, 70, 70),
+                SelectedColor = Color.FromArgb(0, 90, 158),
+                IconPainter = icon
+            };
+            _tip.SetToolTip(btn, tip);
+            var captured = tool;
+            btn.Click += (_, _) => SetTool(captured);
+            _toolBtns.Add(btn);
+            _toolbar.Controls.Add(btn);
+            x += iconSize + gap;
+        }
+
+        x += groupGap;
+        _toolbar.Controls.Add(MakeSep(x, iconSize));
+        x += 1 + groupGap;
+
+        // ── Color dot buttons ─────────────────────────────────
+        Color[] colors = [
+            Color.FromArgb(235, 64, 52),
+            Color.FromArgb(0, 122, 255),
+            Color.FromArgb(52, 199, 89),
+            Color.FromArgb(255, 214, 10),
+            Color.White
+        ];
+
+        foreach (var c in colors)
+        {
+            var btn = new RoundedButton
+            {
+                Location = new Point(x, btnY + 7),
+                Size = new Size(20, 20),
+                CornerRadius = 10, // circle
+                IdleColor = c,
+                HoverColor = c,
+                PressedColor = c,
+                SelectedColor = c,
+                ForeColor = c,
+                SelectedBorderColor = Color.White,
+                SelectedBorderWidth = 2
+            };
+            var captured = c;
+            btn.Click += (_, _) => SetColor(captured);
+            _colorBtns.Add(btn);
+            _toolbar.Controls.Add(btn);
+            x += 24;
+        }
+
+        x += groupGap;
+        _toolbar.Controls.Add(MakeSep(x, iconSize));
+        x += 1 + groupGap;
+
+        // ── Undo icon button ──────────────────────────────────
+        var undoBtn = new RoundedButton
+        {
+            Location = new Point(x, btnY),
+            Size = new Size(iconSize, iconSize),
+            ForeColor = Color.White,
+            CornerRadius = 6,
+            IdleColor = Color.FromArgb(38, 38, 38),
+            HoverColor = Color.FromArgb(55, 55, 55),
+            PressedColor = Color.FromArgb(70, 70, 70),
+            IconPainter = ToolIcons.Undo
+        };
+        _tip.SetToolTip(undoBtn, "撤销 (Ctrl+Z)");
+        undoBtn.Click += (_, _) => Undo();
+        _toolbar.Controls.Add(undoBtn);
+        x += iconSize + groupGap;
+
+        _toolbar.Controls.Add(MakeSep(x, iconSize));
+        x += 1 + groupGap;
+
+        // ── Action icon buttons ───────────────────────────────
+        var actions = new (string tip, Action<Graphics, Rectangle, Color> icon, Action handler)[]
+        {
+            ($"置顶贴图 ({_settings.PinShortcut})", ToolIcons.Pin, PinAndClose),
+            ("保存 (Ctrl+S)", ToolIcons.Save, () => _ = SaveAndCloseAsync()),
+            ("复制 (Enter)",  ToolIcons.Copy, CopyAndClose),
+            ("关闭 (Esc)",    ToolIcons.Close, Close),
+        };
+
+        foreach (var (tip, icon, handler) in actions)
+        {
+            var btn = new RoundedButton
+            {
+                Location = new Point(x, btnY),
+                Size = new Size(iconSize, iconSize),
+                ForeColor = Color.White,
+                CornerRadius = 6,
+                IdleColor = Color.FromArgb(38, 38, 38),
+                HoverColor = Color.FromArgb(55, 55, 55),
+                PressedColor = Color.FromArgb(70, 70, 70),
+                IconPainter = icon
+            };
+            _tip.SetToolTip(btn, tip);
+            var h = handler;
+            btn.Click += (_, _) => h();
+            _toolbar.Controls.Add(btn);
+            x += iconSize + gap;
+        }
+
+        x += 6;
+        _toolbar.Width = x;
+        _toolbar.Height = iconSize + btnY * 2;
+
+        UpdateToolHighlight();
+        UpdateColorHighlight();
+    }
+
+    private static Panel MakeSep(int x, int iconSize) =>
+        new()
+        {
+            Location = new Point(x, 10),
+            Size = new Size(1, iconSize - 6),
+            BackColor = Color.FromArgb(80, 80, 80)
+        };
+
+    private void SetTool(AnnotationTool tool)
+    {
+        CommitTextInput();
+        _tool = tool;
+        UpdateToolHighlight();
+        UpdateCursor();
+    }
+
+    private void SetColor(Color c)
+    {
+        _color = c;
+        UpdateColorHighlight();
+        if (_textBox is not null)
+            _textBox.ForeColor = _color;
+    }
+
+    private void UpdateToolHighlight()
+    {
+        var allTools = Enum.GetValues<AnnotationTool>();
+        for (var i = 0; i < _toolBtns.Count && i < allTools.Length; i++)
+        {
+            _toolBtns[i].IsSelected = allTools[i] == _tool;
+            _toolBtns[i].Invalidate();
+        }
+    }
+
+    private void UpdateColorHighlight()
+    {
+        foreach (var btn in _colorBtns)
+        {
+            var selected = btn.IdleColor.ToArgb() == _color.ToArgb();
+            // Draw a white ring around selected color
+            btn.IsSelected = selected;
+            btn.Invalidate();
+        }
+    }
+
+    private void UpdateCursor()
+    {
+        if (_phase == Phase.Selecting)
+        {
+            Cursor = Cursors.Cross;
+        }
+        else if (_phase == Phase.Ready)
+        {
+            Cursor = _tool == AnnotationTool.Text ? Cursors.IBeam : Cursors.Cross;
+        }
+    }
+
+    #endregion
+
+    #region Form lifecycle
+
+    protected override void OnShown(EventArgs e)
+    {
+        base.OnShown(e);
+        _screenBitmap?.Dispose();
+        var vs = SystemInformation.VirtualScreen;
+        _screenBitmap = new Bitmap(vs.Width, vs.Height, PixelFormat.Format32bppArgb);
+        using (var g = Graphics.FromImage(_screenBitmap))
+            g.CopyFromScreen(vs.Location, Point.Empty, vs.Size);
+        Invalidate();
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _screenBitmap?.Dispose();
+            _textPanel?.Dispose();
+            _textBox?.Dispose();
+            _tip.Dispose();
+        }
+
+        base.Dispose(disposing);
+    }
+
+    #endregion
+
+    #region Painting (layer‑based: screen → overlay → selection clear → annotations → preview → border)
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        if (_screenBitmap is null) return;
+
+        var g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+
+        // 1. Full screen capture
+        g.DrawImageUnscaled(_screenBitmap, 0, 0);
+
+        // 2. Dark overlay
+        using (var brush = new SolidBrush(Color.FromArgb(120, 0, 0, 0)))
+            g.FillRectangle(brush, ClientRectangle);
+
+        if (_selection.Width < MinSelection || _selection.Height < MinSelection)
+            return;
+
+        // 3. Clear selection area — reveal the original capture
+        var saved = g.Save();
+        g.SetClip(_selection);
+        g.DrawImage(_screenBitmap, _selection, _selection, GraphicsUnit.Pixel);
+
+        // 4. Committed annotations
+        foreach (var ann in _annotations)
+            ann.Draw(g, _screenBitmap);
+
+        // 5. In‑progress preview
+        DrawPreview(g);
+
+        g.Restore(saved);
+
+        // 6. Selection border
+        using (var pen = new Pen(Color.FromArgb(0, 174, 255), 2))
+            g.DrawRectangle(pen, _selection.X, _selection.Y, _selection.Width, _selection.Height);
+
+        // 6b. Selection resize handles
+        if (_phase == Phase.Ready)
+            DrawSelectionHandles(g);
+
+        // 7. Dimension label
+        DrawSizeLabel(g);
+
+        // 8. Toolbar shadow
+        if (_toolbar.Visible)
+            DrawToolbarShadow(g);
+
+        // 9. Magnifier (during active selection drag)
+        if (_selStart is not null)
+            DrawMagnifier(g, _lastMousePt);
+    }
+
+    private void DrawSizeLabel(Graphics g)
+    {
+        var text = $"{_selection.Width} × {_selection.Height}";
+        using var font = new Font("Microsoft YaHei UI", 9f);
+        var sz = g.MeasureString(text, font);
+        var lx = (float)_selection.Left;
+        var ly = _selection.Top - sz.Height - 12;
+        if (ly < 2) ly = _selection.Top + 8;
+
+        var rect = new RectangleF(lx, ly, sz.Width + 16, sz.Height + 6);
+        using var path = new GraphicsPath();
+        var d = 8;
+        path.AddArc(rect.X, rect.Y, d, d, 180, 90);
+        path.AddArc(rect.Right - d, rect.Y, d, d, 270, 90);
+        path.AddArc(rect.Right - d, rect.Bottom - d, d, d, 0, 90);
+        path.AddArc(rect.X, rect.Bottom - d, d, d, 90, 90);
+        path.CloseFigure();
+
+        using (var bg = new SolidBrush(Color.FromArgb(220, 32, 32, 32)))
+            g.FillPath(bg, path);
+        using (var fg = new SolidBrush(Color.White))
+            g.DrawString(text, font, fg, lx + 8, ly + 3);
+    }
+
+    private void DrawPreview(Graphics g)
+    {
+        if (_drawStart is null || _phase != Phase.Drawing) return;
+
+        var s = _drawStart.Value;
+        var end = _drawEnd;
+
+        switch (_tool)
+        {
+            case AnnotationTool.Rectangle:
+            {
+                var r = AnnotationHelper.Normalize(s, end);
+                if (r.Width > 0 && r.Height > 0)
+                {
+                    using var pen = new Pen(_color, 3);
+                    g.DrawRectangle(pen, r);
+                }
+
+                break;
+            }
+            case AnnotationTool.Ellipse:
+            {
+                var r = AnnotationHelper.Normalize(s, end);
+                if (r.Width > 0 && r.Height > 0)
+                {
+                    using var pen = new Pen(_color, 3);
+                    g.DrawEllipse(pen, r);
+                }
+
+                break;
+            }
+            case AnnotationTool.Arrow:
+            {
+                var dx = end.X - s.X;
+                var dy = end.Y - s.Y;
+                if (dx * dx + dy * dy >= 9)
+                {
+                    using var pen = new Pen(_color, 3);
+                    pen.CustomEndCap = new AdjustableArrowCap(5, 5);
+                    g.DrawLine(pen, s, end);
+                }
+
+                break;
+            }
+            case AnnotationTool.Line:
+            {
+                if (s != end)
+                {
+                    using var pen = new Pen(_color, 3);
+                    g.DrawLine(pen, s, end);
+                }
+
+                break;
+            }
+            case AnnotationTool.Highlight:
+            {
+                var r = AnnotationHelper.Normalize(s, end);
+                if (r.Width > 0 && r.Height > 0)
+                {
+                    using var brush = new SolidBrush(Color.FromArgb(100, Color.Yellow));
+                    g.FillRectangle(brush, r);
+                }
+
+                break;
+            }
+            case AnnotationTool.Mosaic:
+            {
+                if (_screenBitmap is not null && _freePoints is { Count: >= 2 })
+                    new MosaicBrushAnnotation { Points = new List<Point>(_freePoints) }.Draw(g, _screenBitmap);
+                break;
+            }
+            case AnnotationTool.FreeDraw:
+            {
+                if (_freePoints is { Count: >= 2 })
+                {
+                    using var pen = new Pen(_color, 3)
+                    {
+                        LineJoin = LineJoin.Round,
+                        StartCap = LineCap.Round,
+                        EndCap = LineCap.Round
+                    };
+                    g.DrawLines(pen, _freePoints.ToArray());
+                }
+
+                break;
+            }
+        }
+    }
+
+    #endregion
+
+    #region Mouse interaction
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        base.OnMouseDown(e);
+        if (e.Button == MouseButtons.Right) { Close(); return; }
+        if (e.Button != MouseButtons.Left) return;
+
+        var pt = e.Location;
+
+        switch (_phase)
+        {
+            case Phase.Selecting:
+                _selStart = pt;
+                _selection = Rectangle.Empty;
+                _toolbar.Visible = false;
+                break;
+
+            case Phase.Ready:
+            {
+                // Check resize handles first
+                var handle = HitTestHandle(pt);
+                if (handle is not ResizeHandle.None and not ResizeHandle.Move)
+                {
+                    _activeHandle = handle;
+                    _resizeOrigin = pt;
+                    _resizeOriginalSel = _selection;
+                    return;
+                }
+
+                // Check move (inside selection near edges / outside annotation area)
+                if (handle == ResizeHandle.Move)
+                {
+                    _activeHandle = ResizeHandle.Move;
+                    _resizeOrigin = pt;
+                    _resizeOriginalSel = _selection;
+                    return;
+                }
+
+                if (!_selection.Contains(pt))
+                {
+                    // Click outside → start new selection
+                    _annotations.Clear();
+                    _phase = Phase.Selecting;
+                    _selStart = pt;
+                    _selection = Rectangle.Empty;
+                    _toolbar.Visible = false;
+                    Cursor = Cursors.Cross;
+                    Invalidate();
+                    return;
+                }
+
+                if (_tool == AnnotationTool.Text)
+                {
+                    // Hit-test existing text annotations for re-editing
+                    for (var i = _annotations.Count - 1; i >= 0; i--)
+                    {
+                        if (_annotations[i] is TextAnnotation ta && ta.GetBounds().Contains(pt))
+                        {
+                            _editingAnnotationIndex = i;
+                            ShowTextInput(ta.Position, ta.Text, ta.FontSize, ta.Color);
+                            return;
+                        }
+                    }
+
+                    ShowTextInput(pt);
+                    return;
+                }
+
+                _phase = Phase.Drawing;
+                _drawStart = pt;
+                _drawEnd = pt;
+                if (_tool is AnnotationTool.FreeDraw or AnnotationTool.Mosaic)
+                    _freePoints = [pt];
+                break;
+            }
+        }
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        var pt = e.Location;
+        _lastMousePt = pt;
+
+        // Active resize / move
+        if (_activeHandle != ResizeHandle.None)
+        {
+            ApplyResize(pt);
+            PositionToolbar();
+            Invalidate();
+            return;
+        }
+
+        if (_selStart is not null)
+        {
+            _selection = AnnotationHelper.Normalize(_selStart.Value, pt);
+            Invalidate();
+            return;
+        }
+
+        if (_phase == Phase.Drawing && _drawStart is not null)
+        {
+            _drawEnd = pt;
+            _freePoints?.Add(pt);
+            Invalidate();
+            return;
+        }
+
+        // Update cursor based on handle hit or tool
+        if (_phase == Phase.Ready)
+        {
+            var handle = HitTestHandle(pt);
+            if (handle != ResizeHandle.None)
+            {
+                Cursor = GetHandleCursor(handle);
+            }
+            else if (_tool == AnnotationTool.Text && _annotations.Any(a => a is TextAnnotation ta && ta.GetBounds().Contains(pt)))
+            {
+                Cursor = Cursors.IBeam;
+            }
+            else
+            {
+                Cursor = GetHandleCursor(handle);
+            }
+        }
+    }
+
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        base.OnMouseUp(e);
+
+        // Finish resize / move
+        if (_activeHandle != ResizeHandle.None)
+        {
+            _activeHandle = ResizeHandle.None;
+            if (_selection.Width >= MinSelection && _selection.Height >= MinSelection)
+            {
+                PositionToolbar();
+                _toolbar.Visible = true;
+            }
+            Invalidate();
+            return;
+        }
+
+        if (_selStart is not null)
+        {
+            _selection = AnnotationHelper.Normalize(_selStart.Value, e.Location);
+            _selStart = null;
+
+            if (_selection.Width >= MinSelection && _selection.Height >= MinSelection)
+            {
+                _phase = Phase.Ready;
+                UpdateCursor();
+                PositionToolbar();
+                _toolbar.Visible = true;
+            }
+            else
+            {
+                _selection = Rectangle.Empty;
+            }
+
+            Invalidate();
+            return;
+        }
+
+        if (_phase == Phase.Drawing && _drawStart is not null)
+        {
+            _drawEnd = e.Location;
+            CommitAnnotation();
+            _drawStart = null;
+            _freePoints = null;
+            _phase = Phase.Ready;
+            Invalidate();
+        }
+    }
+
+    protected override void OnMouseWheel(MouseEventArgs e)
+    {
+        base.OnMouseWheel(e);
+
+        // Ctrl+Wheel adjusts font size when text input is active
+        if (_textBox is not null && ModifierKeys.HasFlag(Keys.Control))
+        {
+            var delta = e.Delta > 0 ? 2f : -2f;
+            _textFontSize = Math.Clamp(_textFontSize + delta, 8f, 100f);
+            _textBox.Font = new Font("Microsoft YaHei UI", _textFontSize, FontStyle.Regular, GraphicsUnit.Pixel);
+            _textBox.ForeColor = _color;
+            AutoSizeTextPanel();
+        }
+    }
+
+    #endregion
+
+    #region Selection resize / move
+
+    private ResizeHandle HitTestHandle(Point pt)
+    {
+        if (_selection.Width < MinSelection || _selection.Height < MinSelection)
+            return ResizeHandle.None;
+
+        const int ht = 8;
+        var s = _selection;
+
+        var handles = new (ResizeHandle h, Point c)[]
+        {
+            (ResizeHandle.TopLeft,     new(s.Left, s.Top)),
+            (ResizeHandle.Top,         new(s.Left + s.Width / 2, s.Top)),
+            (ResizeHandle.TopRight,    new(s.Right, s.Top)),
+            (ResizeHandle.Right,       new(s.Right, s.Top + s.Height / 2)),
+            (ResizeHandle.BottomRight, new(s.Right, s.Bottom)),
+            (ResizeHandle.Bottom,      new(s.Left + s.Width / 2, s.Bottom)),
+            (ResizeHandle.BottomLeft,  new(s.Left, s.Bottom)),
+            (ResizeHandle.Left,        new(s.Left, s.Top + s.Height / 2)),
+        };
+
+        foreach (var (h, c) in handles)
+        {
+            if (Math.Abs(pt.X - c.X) <= ht && Math.Abs(pt.Y - c.Y) <= ht)
+                return h;
+        }
+
+        // Near edge (within 5px of border) → move
+        var inner = Rectangle.Inflate(_selection, -5, -5);
+        if (_selection.Contains(pt) && !inner.Contains(pt))
+            return ResizeHandle.Move;
+
+        return ResizeHandle.None;
+    }
+
+    private Cursor GetHandleCursor(ResizeHandle handle) => handle switch
+    {
+        ResizeHandle.TopLeft or ResizeHandle.BottomRight => Cursors.SizeNWSE,
+        ResizeHandle.TopRight or ResizeHandle.BottomLeft => Cursors.SizeNESW,
+        ResizeHandle.Top or ResizeHandle.Bottom => Cursors.SizeNS,
+        ResizeHandle.Left or ResizeHandle.Right => Cursors.SizeWE,
+        ResizeHandle.Move => Cursors.SizeAll,
+        _ => _tool == AnnotationTool.Text ? Cursors.IBeam : Cursors.Cross
+    };
+
+    private void ApplyResize(Point pt)
+    {
+        var orig = _resizeOriginalSel;
+
+        if (_activeHandle == ResizeHandle.Move)
+        {
+            var dx = pt.X - _resizeOrigin.X;
+            var dy = pt.Y - _resizeOrigin.Y;
+            _selection = new Rectangle(orig.X + dx, orig.Y + dy, orig.Width, orig.Height);
+            return;
+        }
+
+        var left = orig.Left;
+        var top = orig.Top;
+        var right = orig.Right;
+        var bottom = orig.Bottom;
+
+        switch (_activeHandle)
+        {
+            case ResizeHandle.TopLeft:     left = pt.X; top = pt.Y; break;
+            case ResizeHandle.Top:         top = pt.Y; break;
+            case ResizeHandle.TopRight:    right = pt.X; top = pt.Y; break;
+            case ResizeHandle.Right:       right = pt.X; break;
+            case ResizeHandle.BottomRight: right = pt.X; bottom = pt.Y; break;
+            case ResizeHandle.Bottom:      bottom = pt.Y; break;
+            case ResizeHandle.BottomLeft:  left = pt.X; bottom = pt.Y; break;
+            case ResizeHandle.Left:        left = pt.X; break;
+        }
+
+        _selection = new Rectangle(
+            Math.Min(left, right), Math.Min(top, bottom),
+            Math.Abs(right - left), Math.Abs(bottom - top));
+    }
+
+    #endregion
+
+    #region Keyboard shortcuts
+
+    protected override void OnKeyDown(KeyEventArgs e)
+    {
+        base.OnKeyDown(e);
+
+        // Let the active text box handle its own input
+        if (_textBox is not null) return;
+
+        if (e.KeyCode == Keys.Escape) { Close(); return; }
+        if (e.Control && e.KeyCode == Keys.Z) { Undo(); return; }
+        if (e.Control && e.KeyCode == Keys.S && _phase == Phase.Ready) { _ = SaveAndCloseAsync(); return; }
+        if (e.KeyCode == Keys.Enter && _phase == Phase.Ready) { CopyAndClose(); return; }
+        if (e.Control == _pinCtrl && e.Shift == _pinShift && e.Alt == _pinAlt && e.KeyCode == _pinKey && _phase == Phase.Ready)
+        {
+            PinAndClose();
+            return;
+        }
+
+        // Single‑key tool shortcuts
+        switch (e.KeyCode)
+        {
+            case Keys.R: SetTool(AnnotationTool.Rectangle); break;
+            case Keys.E: SetTool(AnnotationTool.Ellipse); break;
+            case Keys.A: SetTool(AnnotationTool.Arrow); break;
+            case Keys.L: SetTool(AnnotationTool.Line); break;
+            case Keys.T: SetTool(AnnotationTool.Text); break;
+            case Keys.H: SetTool(AnnotationTool.Highlight); break;
+            case Keys.M: SetTool(AnnotationTool.Mosaic); break;
+            case Keys.P: SetTool(AnnotationTool.FreeDraw); break;
+        }
+    }
+
+    #endregion
+
+    #region Annotation commit / undo
+
+    private void CommitAnnotation()
+    {
+        if (_drawStart is null) return;
+        var s = _drawStart.Value;
+        var end = _drawEnd;
+
+        AnnotationItem? item = _tool switch
+        {
+            AnnotationTool.Rectangle => new RectangleAnnotation { Start = s, End = end, Color = _color },
+            AnnotationTool.Ellipse => new EllipseAnnotation { Start = s, End = end, Color = _color },
+            AnnotationTool.Arrow => new ArrowAnnotation { Start = s, End = end, Color = _color },
+            AnnotationTool.Line => new LineAnnotation { Start = s, End = end, Color = _color },
+            AnnotationTool.Highlight => new HighlightAnnotation { Start = s, End = end },
+            AnnotationTool.Mosaic when _freePoints is { Count: >= 2 } =>
+                new MosaicBrushAnnotation { Points = new List<Point>(_freePoints) },
+            AnnotationTool.FreeDraw when _freePoints is { Count: >= 2 } =>
+                new FreeDrawAnnotation { Points = new List<Point>(_freePoints), Color = _color },
+            _ => null
+        };
+
+        if (item is not null) _annotations.Add(item);
+    }
+
+    private void Undo()
+    {
+        if (_annotations.Count > 0)
+        {
+            _annotations.RemoveAt(_annotations.Count - 1);
+            Invalidate();
+        }
+    }
+
+    #endregion
+
+    #region Text input
+
+    private void ShowTextInput(Point localPt, string? existingText = null, float? fontSize = null, Color? color = null)
+    {
+        CommitTextInput();
+
+        _textInputPosition = localPt;
+        _textInputManualSize = false;
+        if (fontSize.HasValue) _textFontSize = fontSize.Value;
+        if (color.HasValue) _color = color.Value;
+
+        var font = new Font("Microsoft YaHei UI", _textFontSize, FontStyle.Regular, GraphicsUnit.Pixel);
+        var initialWidth = 40;
+        if (!string.IsNullOrEmpty(existingText))
+        {
+            var sz = TextRenderer.MeasureText(existingText, font);
+            initialWidth = sz.Width + 16;
+        }
+
+        var lineHeight = font.Height + 4;
+
+        _textPanel = new Panel
+        {
+            Location = new Point(localPt.X - 1, localPt.Y - 1),
+            Size = new Size(initialWidth + 2, lineHeight + 2),
+            BackColor = Color.White,
+            Padding = new Padding(1),
+        };
+        _textPanel.Paint += TextPanelOnPaint;
+        _textPanel.MouseDown += TextInputMouseDown;
+        _textPanel.MouseMove += TextInputMouseMove;
+        _textPanel.MouseUp += TextInputMouseUp;
+
+        _textBox = new TextBox
+        {
+            Dock = DockStyle.Fill,
+            Font = font,
+            ForeColor = _color,
+            BackColor = Color.FromArgb(40, 40, 40),
+            BorderStyle = BorderStyle.None,
+            Cursor = Cursors.IBeam,
+            Multiline = true,
+            WordWrap = false,
+            Text = existingText ?? "",
+            ScrollBars = ScrollBars.None
+        };
+
+        _textBox.TextChanged += (_, _) => AutoSizeTextPanel();
+        _textBox.MouseDown += TextInputMouseDown;
+        _textBox.MouseMove += TextInputMouseMove;
+        _textBox.MouseUp += TextInputMouseUp;
+        _textBox.KeyDown += (_, ke) =>
+        {
+            if (ke.KeyCode == Keys.Escape)
+            {
+                ke.SuppressKeyPress = true;
+                CommitTextInput();
+            }
+        };
+
+        _textPanel.Controls.Add(_textBox);
+        Controls.Add(_textPanel);
+        _textPanel.BringToFront();
+        _textBox.Focus();
+        if (!string.IsNullOrEmpty(existingText))
+            _textBox.SelectionStart = existingText.Length;
+    }
+
+    private void AutoSizeTextPanel()
+    {
+        if (_textBox is null || _textPanel is null || _textInputManualSize) return;
+        var font = _textBox.Font;
+        var lines = _textBox.Text.Split('\n');
+        var maxWidth = 40;
+        foreach (var line in lines)
+        {
+            var w = TextRenderer.MeasureText(line + "W", font).Width;
+            if (w > maxWidth) maxWidth = w;
+        }
+
+        var lineHeight = font.Height + 2;
+        var totalHeight = Math.Max(1, lines.Length) * lineHeight + 4;
+        _textPanel.Size = new Size(maxWidth + 2, totalHeight + 2);
+    }
+
+    private void TextPanelOnPaint(object? sender, PaintEventArgs e)
+    {
+        if (_textPanel is null) return;
+        using var gripPen = new Pen(Color.FromArgb(170, 170, 170), 1);
+        var r = _textPanel.ClientRectangle;
+        e.Graphics.DrawLine(gripPen, r.Right - 9, r.Bottom - 3, r.Right - 3, r.Bottom - 9);
+        e.Graphics.DrawLine(gripPen, r.Right - 13, r.Bottom - 3, r.Right - 3, r.Bottom - 13);
+    }
+
+    private static bool IsModifierOnly(Keys keyCode) =>
+        keyCode is Keys.ControlKey or Keys.ShiftKey or Keys.Menu;
+
+    private Point GetPointInTextPanel(object? sender, MouseEventArgs e)
+    {
+        if (_textPanel is null) return e.Location;
+        if (sender == _textPanel) return e.Location;
+        return _textPanel.PointToClient(((Control)sender!).PointToScreen(e.Location));
+    }
+
+    private bool IsTextResizeGrip(Point panelPoint)
+    {
+        if (_textPanel is null) return false;
+        return panelPoint.X >= _textPanel.Width - 14 && panelPoint.Y >= _textPanel.Height - 14;
+    }
+
+    private bool IsTextBorderZone(Point panelPoint)
+    {
+        if (_textPanel is null) return false;
+        const int borderHit = 6;
+        return panelPoint.X <= borderHit || panelPoint.Y <= borderHit ||
+               panelPoint.X >= _textPanel.Width - borderHit || panelPoint.Y >= _textPanel.Height - borderHit;
+    }
+
+    private void TextInputMouseDown(object? sender, MouseEventArgs e)
+    {
+        if (_textPanel is null || e.Button != MouseButtons.Left) return;
+        var panelPoint = GetPointInTextPanel(sender, e);
+
+        if (IsTextResizeGrip(panelPoint))
+        {
+            _textInputResizing = true;
+            _textInputManualSize = true;
+            _textInputMouseOriginScreen = Control.MousePosition;
+            _textInputPanelSizeOrigin = _textPanel.Size;
+            _textBox?.Focus();
+            return;
+        }
+
+        if (IsTextBorderZone(panelPoint))
+        {
+            _textInputDragging = true;
+            _textInputMouseOriginScreen = Control.MousePosition;
+            _textInputPanelOrigin = _textPanel.Location;
+            _textBox?.Focus();
+        }
+    }
+
+    private void TextInputMouseMove(object? sender, MouseEventArgs e)
+    {
+        if (_textPanel is null) return;
+
+        var panelPoint = GetPointInTextPanel(sender, e);
+        if (_textInputResizing)
+        {
+            var current = Control.MousePosition;
+            var dx = current.X - _textInputMouseOriginScreen.X;
+            var dy = current.Y - _textInputMouseOriginScreen.Y;
+            var w = Math.Max(42, _textInputPanelSizeOrigin.Width + dx);
+            var h = Math.Max(_textBox?.Font.Height + 8 ?? 24, _textInputPanelSizeOrigin.Height + dy);
+            _textPanel.Size = new Size(w, h);
+            _textPanel.Invalidate();
+            return;
+        }
+
+        if (_textInputDragging)
+        {
+            var current = Control.MousePosition;
+            var dx = current.X - _textInputMouseOriginScreen.X;
+            var dy = current.Y - _textInputMouseOriginScreen.Y;
+            _textPanel.Location = new Point(_textInputPanelOrigin.X + dx, _textInputPanelOrigin.Y + dy);
+            _textInputPosition = new Point(_textPanel.Left + _textPanel.Padding.Left, _textPanel.Top + _textPanel.Padding.Top);
+            return;
+        }
+
+        if (IsTextResizeGrip(panelPoint))
+            Cursor = Cursors.SizeNWSE;
+        else if (IsTextBorderZone(panelPoint))
+            Cursor = Cursors.SizeAll;
+        else
+            Cursor = Cursors.IBeam;
+    }
+
+    private void TextInputMouseUp(object? sender, MouseEventArgs e)
+    {
+        _textInputDragging = false;
+        _textInputResizing = false;
+    }
+
+    private void CommitTextInput()
+    {
+        if (_textBox is null) return;
+        var text = _textBox.Text.Trim();
+        if (!string.IsNullOrEmpty(text))
+        {
+            // If editing an existing annotation, remove the old one first
+            if (_editingAnnotationIndex >= 0 && _editingAnnotationIndex < _annotations.Count)
+                _annotations.RemoveAt(_editingAnnotationIndex);
+
+            _annotations.Add(new TextAnnotation
+            {
+                Position = _textInputPosition,
+                Text = text,
+                Color = _color,
+                FontSize = _textFontSize
+            });
+        }
+        else if (_editingAnnotationIndex >= 0 && _editingAnnotationIndex < _annotations.Count)
+        {
+            // Deleting text = remove the annotation
+            _annotations.RemoveAt(_editingAnnotationIndex);
+        }
+
+        _editingAnnotationIndex = -1;
+        RemoveTextInput();
+        Invalidate();
+    }
+
+    private void RemoveTextInput()
+    {
+        if (_textPanel is not null)
+        {
+            Controls.Remove(_textPanel);
+            _textPanel.Dispose();
+            _textPanel = null;
+            _textBox = null;
+            _textInputDragging = false;
+            _textInputResizing = false;
+            _textInputManualSize = false;
+        }
+        else if (_textBox is not null)
+        {
+            Controls.Remove(_textBox);
+            _textBox.Dispose();
+            _textBox = null;
+            _textInputDragging = false;
+            _textInputResizing = false;
+            _textInputManualSize = false;
+        }
+    }
+
+    #endregion
+
+    #region Visual helpers (handles, shadow, magnifier)
+
+    private void DrawSelectionHandles(Graphics g)
+    {
+        const int hs = 6;
+        var sel = _selection;
+        var pts = new[]
+        {
+            new Point(sel.Left, sel.Top),
+            new Point(sel.Left + sel.Width / 2, sel.Top),
+            new Point(sel.Right, sel.Top),
+            new Point(sel.Right, sel.Top + sel.Height / 2),
+            new Point(sel.Right, sel.Bottom),
+            new Point(sel.Left + sel.Width / 2, sel.Bottom),
+            new Point(sel.Left, sel.Bottom),
+            new Point(sel.Left, sel.Top + sel.Height / 2),
+        };
+
+        using var fill = new SolidBrush(Color.White);
+        using var border = new Pen(Color.FromArgb(0, 174, 255), 1);
+        foreach (var pt in pts)
+        {
+            var r = new Rectangle(pt.X - hs / 2, pt.Y - hs / 2, hs, hs);
+            g.FillRectangle(fill, r);
+            g.DrawRectangle(border, r);
+        }
+    }
+
+    private void DrawToolbarShadow(Graphics g)
+    {
+        var prev = g.SmoothingMode;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        for (var i = 12; i > 0; i -= 2)
+        {
+            var sr = new Rectangle(
+                _toolbar.Left - i, _toolbar.Top - i + 4,
+                _toolbar.Width + i * 2, _toolbar.Height + i * 2);
+            var alpha = (int)(20.0 * (12 - i) / 12);
+            using var brush = new SolidBrush(Color.FromArgb(alpha, 0, 0, 0));
+            using var path = RoundedButton.RoundedRect(sr, _toolbar.CornerRadius + i);
+            g.FillPath(brush, path);
+        }
+        g.SmoothingMode = prev;
+    }
+
+    private void DrawMagnifier(Graphics g, Point cursor)
+    {
+        if (_screenBitmap is null) return;
+
+        const int magSize = 120;
+        const int zoomLevel = 4;
+        var srcSize = magSize / zoomLevel;
+
+        var srcX = Math.Clamp(cursor.X - srcSize / 2, 0, Math.Max(0, _screenBitmap.Width - srcSize));
+        var srcY = Math.Clamp(cursor.Y - srcSize / 2, 0, Math.Max(0, _screenBitmap.Height - srcSize));
+        var srcRect = new Rectangle(srcX, srcY, srcSize, srcSize);
+
+        // Position below-right of cursor
+        var dx = cursor.X + 20;
+        var dy = cursor.Y + 20;
+        if (dx + magSize + 10 > ClientSize.Width) dx = cursor.X - magSize - 20;
+        if (dy + magSize + 36 > ClientSize.Height) dy = cursor.Y - magSize - 36;
+        if (dx < 4) dx = 4;
+        if (dy < 4) dy = 4;
+
+        var destRect = new Rectangle(dx, dy, magSize, magSize);
+
+        // Background card
+        var cardRect = new Rectangle(dx - 4, dy - 4, magSize + 8, magSize + 32);
+        using (var cardBrush = new SolidBrush(Color.FromArgb(220, 24, 24, 24)))
+        using (var cardPath = RoundedButton.RoundedRect(cardRect, 6))
+            g.FillPath(cardBrush, cardPath);
+
+        // Zoomed image
+        var prevInterp = g.InterpolationMode;
+        var prevPixel = g.PixelOffsetMode;
+        g.InterpolationMode = InterpolationMode.NearestNeighbor;
+        g.PixelOffsetMode = PixelOffsetMode.Half;
+        g.DrawImage(_screenBitmap, destRect, srcRect, GraphicsUnit.Pixel);
+        g.InterpolationMode = prevInterp;
+        g.PixelOffsetMode = prevPixel;
+
+        // Border
+        using (var pen = new Pen(Color.FromArgb(0, 174, 255), 1))
+            g.DrawRectangle(pen, destRect);
+
+        // Crosshair
+        var cx = dx + magSize / 2;
+        var cy = dy + magSize / 2;
+        using (var crossPen = new Pen(Color.FromArgb(140, 0, 174, 255), 1))
+        {
+            g.DrawLine(crossPen, cx, dy, cx, dy + magSize);
+            g.DrawLine(crossPen, dx, cy, dx + magSize, cy);
+        }
+
+        // Coordinates text
+        var text = $"({cursor.X}, {cursor.Y})";
+        using var font = new Font("Consolas", 9f);
+        using var textBrush = new SolidBrush(Color.FromArgb(200, 255, 255, 255));
+        g.DrawString(text, font, textBrush, dx + 4, dy + magSize + 5);
+    }
+
+    #endregion
+
+    #region Toolbar positioning
+
+    private void PositionToolbar()
+    {
+        var x = _selection.Left;
+        var y = _selection.Bottom + 10;
+
+        if (x + _toolbar.Width > ClientSize.Width - 10)
+            x = ClientSize.Width - _toolbar.Width - 10;
+        if (x < 10) x = 10;
+
+        if (y + _toolbar.Height > ClientSize.Height - 10)
+            y = _selection.Top - _toolbar.Height - 10;
+        if (y < 10) y = 10;
+
+        _toolbar.Location = new Point(x, y);
+
+        // Update acrylic backdrop from screen capture
+        if (_screenBitmap is not null)
+        {
+            _toolbar.BackdropSource = _screenBitmap;
+            _toolbar.BackdropRegion = new Rectangle(x, y, _toolbar.Width, _toolbar.Height);
+            _toolbar.Invalidate();
+        }
+    }
+
+    #endregion
+
+    #region Save / Copy / Close
+
+    private void CopyAndClose()
+    {
+        CommitTextInput();
+        using var bmp = CreateSelectedBitmap();
+        if (bmp is not null)
+            Clipboard.SetImage(bmp);
+        Close();
+    }
+
+    private void PinAndClose()
+    {
+        CommitTextInput();
+        var bmp = CreateSelectedBitmap(); // ownership transferred to PinResult → PinForm
+        if (bmp is null) return;
+        PinResult = new PinRequestInfo(bmp, PointToScreen(new Point(_selection.X, _selection.Y)));
+        Close();
+    }
+
+    private async Task SaveAndCloseAsync()
+    {
+        CommitTextInput();
+        using var bmp = CreateSelectedBitmap();
+        if (bmp is null) return;
+
+        var bytes = ToImageBytes(bmp, _settings.DefaultExportFormat, _settings.JpegQuality);
+        await _exportManager.ExportAsync(
+            _settings.SaveDirectory, _settings.FileNamePrefix,
+            new ExportRequest(bytes, _settings.DefaultExportFormat),
+            DateTimeOffset.Now);
+        Close();
+    }
+
+    private Bitmap? CreateSelectedBitmap()
+    {
+        if (_screenBitmap is null || _selection.Width < 1 || _selection.Height < 1)
+            return null;
+
+        var bmp = new Bitmap(_selection.Width, _selection.Height, PixelFormat.Format32bppArgb);
+        using var g = Graphics.FromImage(bmp);
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+
+        // Source region from the original capture
+        g.DrawImage(_screenBitmap,
+            new Rectangle(0, 0, bmp.Width, bmp.Height),
+            _selection, GraphicsUnit.Pixel);
+
+        // Replay annotations (translate from form‑local to output‑bitmap coords)
+        g.TranslateTransform(-_selection.X, -_selection.Y);
+        foreach (var ann in _annotations)
+            ann.Draw(g, _screenBitmap);
+
+        return bmp;
+    }
+
+    private static byte[] ToImageBytes(Bitmap bmp, ExportFormat fmt, int quality)
+    {
+        using var ms = new MemoryStream();
+        if (fmt == ExportFormat.Png)
+        {
+            bmp.Save(ms, ImageFormat.Png);
+        }
+        else
+        {
+            var codec = ImageCodecInfo.GetImageEncoders().First(static x => x.FormatID == ImageFormat.Jpeg.Guid);
+            var p = new EncoderParameters(1);
+            p.Param[0] = new EncoderParameter(Encoder.Quality, (long)quality);
+            bmp.Save(ms, codec, p);
+        }
+
+        return ms.ToArray();
+    }
+
+    #endregion
+}
