@@ -1,11 +1,6 @@
 <Solution>
   <Folder Name="/src/">
-    <Project Path="src/Snipping.App/Snipping.App.csproj" />
     <Project Path="src/Snipping.Core/Snipping.Core.csproj" />
     <Project Path="src/Snipping.WinUI/Snipping.WinUI.csproj" />
-
-  </Folder>
-  <Folder Name="/tests/">
-    <Project Path="tests/Snipping.Core.Tests/Snipping.Core.Tests.csproj" />
   </Folder>
 </Solution>
