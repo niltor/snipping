@@ -270,9 +270,17 @@ public partial class Form1 : Form
     private Bitmap CaptureScreenArea(Rectangle area)
     {
         var bitmap = new Bitmap(area.Width, area.Height);
-        using var graphics = Graphics.FromImage(bitmap);
-        graphics.CopyFromScreen(area.Location, Point.Empty, area.Size);
-        return bitmap;
+        try
+        {
+            using var graphics = Graphics.FromImage(bitmap);
+            graphics.CopyFromScreen(area.Location, Point.Empty, area.Size);
+            return bitmap;
+        }
+        catch
+        {
+            bitmap.Dispose();
+            throw;
+        }
     }
 
     private Point ScaleToImagePoint(Point point)
