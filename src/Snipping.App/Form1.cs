@@ -1,3 +1,4 @@
+using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using Snipping.Core.Capture;
@@ -24,7 +25,7 @@ public partial class Form1 : Form
         annotationToolDropDown.SelectedIndex = 0;
         TopMost = true;
         ShowInTaskbar = false;
-        LoadSettings();
+        Shown += async (_, _) => await LoadSettingsAsync();
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -50,9 +51,9 @@ public partial class Form1 : Form
         base.WndProc(ref m);
     }
 
-    private void LoadSettings()
+    private async Task LoadSettingsAsync()
     {
-        _settings = _settingsManager.LoadAsync(_settingsPath).GetAwaiter().GetResult();
+        _settings = await _settingsManager.LoadAsync(_settingsPath);
         ShowInTaskbar = _settings.ShowEditorInTaskbar;
     }
 
@@ -102,7 +103,7 @@ public partial class Form1 : Form
         statusLabel.Text = "已捕获活动窗口";
     }
 
-    private void SaveButton_Click(object? sender, EventArgs e)
+    private async void SaveButton_Click(object? sender, EventArgs e)
     {
         if (_canvas is null)
         {
@@ -123,7 +124,7 @@ public partial class Form1 : Form
 
         var format = Path.GetExtension(dialog.FileName).Equals(".png", StringComparison.OrdinalIgnoreCase) ? ExportFormat.Png : ExportFormat.Jpeg;
         var data = ToImageBytes(_canvas, format, _settings.JpegQuality);
-        _exportManager.ExportAsync(Path.GetDirectoryName(dialog.FileName)!, Path.GetFileNameWithoutExtension(dialog.FileName), new ExportRequest(data, format, _settings.JpegQuality), DateTimeOffset.Now).GetAwaiter().GetResult();
+        await _exportManager.ExportAsync(Path.GetDirectoryName(dialog.FileName)!, Path.GetFileNameWithoutExtension(dialog.FileName), new ExportRequest(data, format, _settings.JpegQuality), DateTimeOffset.Now);
         statusLabel.Text = $"已保存: {dialog.FileName}";
     }
 
@@ -227,26 +228,25 @@ public partial class Form1 : Form
 
     private static void ApplyMosaic(Bitmap bitmap, Rectangle rect)
     {
-        const int blockSize = 8;
-        for (var y = rect.Top; y < rect.Bottom; y += blockSize)
+        var safeRect = Rectangle.Intersect(rect, new Rectangle(0, 0, bitmap.Width, bitmap.Height));
+        if (safeRect.Width < 2 || safeRect.Height < 2)
         {
-            for (var x = rect.Left; x < rect.Right; x += blockSize)
-            {
-                if (x >= bitmap.Width || y >= bitmap.Height)
-                {
-                    continue;
-                }
-
-                var color = bitmap.GetPixel(x, y);
-                for (var yy = y; yy < y + blockSize && yy < rect.Bottom && yy < bitmap.Height; yy++)
-                {
-                    for (var xx = x; xx < x + blockSize && xx < rect.Right && xx < bitmap.Width; xx++)
-                    {
-                        bitmap.SetPixel(xx, yy, color);
-                    }
-                }
-            }
+            return;
         }
+
+        var w = Math.Max(1, safeRect.Width / 8);
+        var h = Math.Max(1, safeRect.Height / 8);
+        using var mosaic = new Bitmap(w, h);
+        using (var g = Graphics.FromImage(mosaic))
+        {
+            g.InterpolationMode = InterpolationMode.HighQualityBilinear;
+            g.DrawImage(bitmap, new Rectangle(0, 0, w, h), safeRect, GraphicsUnit.Pixel);
+        }
+
+        using var graphics = Graphics.FromImage(bitmap);
+        graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
+        graphics.PixelOffsetMode = PixelOffsetMode.Half;
+        graphics.DrawImage(mosaic, safeRect);
     }
 
     private static byte[] ToImageBytes(Bitmap bitmap, ExportFormat format, int quality)
