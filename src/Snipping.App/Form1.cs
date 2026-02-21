@@ -11,12 +11,17 @@ public partial class Form1 : Form
 {
     private const int HotKeyId = 1001;
     private const int WmHotKey = 0x0312;
+    private const uint ModAlt = 0x0001;
+    private const uint ModControl = 0x0002;
+    private const uint ModShift = 0x0004;
+    private const uint ModWin = 0x0008;
     private readonly SettingsManager _settingsManager = new();
     private readonly ExportManager _exportManager = new();
     private readonly string _settingsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Snipping", "settings.json");
     private SnippingSettings _settings = new();
     private Bitmap? _canvas;
     private Point? _dragStart;
+    private bool _isHotKeyRegistered;
 
     public Form1()
     {
@@ -25,18 +30,23 @@ public partial class Form1 : Form
         annotationToolDropDown.SelectedIndex = 0;
         TopMost = true;
         ShowInTaskbar = false;
-        Shown += async (_, _) => await LoadSettingsAsync();
     }
 
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        RegisterHotKey(Handle, HotKeyId, 0x0002 | 0x0004, (uint)Keys.S);
+        LoadSettings();
+        TryRegisterConfiguredHotKey();
     }
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
-        UnregisterHotKey(Handle, HotKeyId);
+        if (_isHotKeyRegistered)
+        {
+            UnregisterHotKey(Handle, HotKeyId);
+            _isHotKeyRegistered = false;
+        }
+
         _canvas?.Dispose();
         base.OnFormClosed(e);
     }
@@ -51,9 +61,9 @@ public partial class Form1 : Form
         base.WndProc(ref m);
     }
 
-    private async Task LoadSettingsAsync()
+    private void LoadSettings()
     {
-        _settings = await _settingsManager.LoadAsync(_settingsPath);
+        _settings = _settingsManager.Load(_settingsPath);
         ShowInTaskbar = _settings.ShowEditorInTaskbar;
     }
 
@@ -122,21 +132,48 @@ public partial class Form1 : Form
             return;
         }
 
-        var format = Path.GetExtension(dialog.FileName).Equals(".png", StringComparison.OrdinalIgnoreCase) ? ExportFormat.Png : ExportFormat.Jpeg;
-        var data = ToImageBytes(_canvas, format, _settings.JpegQuality);
-        await _exportManager.ExportAsync(Path.GetDirectoryName(dialog.FileName)!, Path.GetFileNameWithoutExtension(dialog.FileName), new ExportRequest(data, format, _settings.JpegQuality), DateTimeOffset.Now);
-        statusLabel.Text = $"已保存: {dialog.FileName}";
+        try
+        {
+            var format = Path.GetExtension(dialog.FileName).Equals(".png", StringComparison.OrdinalIgnoreCase) ? ExportFormat.Png : ExportFormat.Jpeg;
+            var data = ToImageBytes(_canvas, format, _settings.JpegQuality);
+            var directory = Path.GetDirectoryName(dialog.FileName);
+            if (string.IsNullOrWhiteSpace(directory))
+            {
+                directory = string.IsNullOrWhiteSpace(_settings.SaveDirectory) ? Environment.CurrentDirectory : _settings.SaveDirectory;
+            }
+
+            Directory.CreateDirectory(directory);
+            var targetPath = Path.Combine(directory, Path.GetFileName(dialog.FileName));
+            await File.WriteAllBytesAsync(targetPath, data);
+            statusLabel.Text = $"已保存: {targetPath}";
+        }
+        catch (Exception ex)
+        {
+            statusLabel.Text = "保存失败";
+            MessageBox.Show(this, $"保存截图时发生错误：{ex.Message}", "保存失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
-    private void CopyButton_Click(object? sender, EventArgs e)
+    private async void CopyButton_Click(object? sender, EventArgs e)
     {
         if (_canvas is null)
         {
             return;
         }
 
-        Clipboard.SetImage(_canvas);
-        statusLabel.Text = "已复制到剪贴板";
+        try
+        {
+            Clipboard.SetImage(_canvas);
+            statusLabel.Text = "已复制到剪贴板";
+        }
+        catch (Exception ex)
+        {
+            var tempDirectory = Path.Combine(Path.GetTempPath(), "Snipping");
+            const ExportFormat fallbackFormat = ExportFormat.Png;
+            var tempPath = await _exportManager.ExportAsync(tempDirectory, "clipboard_fallback", new ExportRequest(ToImageBytes(_canvas, fallbackFormat, 90), fallbackFormat), DateTimeOffset.Now);
+            statusLabel.Text = "剪贴板写入失败，已导出临时文件";
+            MessageBox.Show(this, $"无法写入剪贴板：{ex.Message}\n已保存到：{tempPath}", "复制失败", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
     }
 
     private void PictureBox_MouseDown(object? sender, MouseEventArgs e)
@@ -290,16 +327,83 @@ public partial class Form1 : Form
             return Point.Empty;
         }
 
-        var x = point.X * _canvas.Width / Math.Max(1, pictureBox.ClientSize.Width);
-        var y = point.Y * _canvas.Height / Math.Max(1, pictureBox.ClientSize.Height);
+        var xLong = (long)point.X * _canvas.Width / Math.Max(1, pictureBox.ClientSize.Width);
+        var yLong = (long)point.Y * _canvas.Height / Math.Max(1, pictureBox.ClientSize.Height);
+        var x = (int)Math.Clamp(xLong, int.MinValue, int.MaxValue);
+        var y = (int)Math.Clamp(yLong, int.MinValue, int.MaxValue);
         return new Point(Math.Clamp(x, 0, _canvas.Width - 1), Math.Clamp(y, 0, _canvas.Height - 1));
     }
 
     private void SetCanvas(Bitmap bitmap)
     {
-        _canvas?.Dispose();
+        var oldCanvas = _canvas;
+        pictureBox.Image = null;
         _canvas = bitmap;
         pictureBox.Image = _canvas;
+        oldCanvas?.Dispose();
+    }
+
+    private void TryRegisterConfiguredHotKey()
+    {
+        if (!TryParseHotKey(_settings.Hotkey, out var modifiers, out var key))
+        {
+            statusLabel.Text = "快捷键配置无效，已回退默认 Ctrl+Shift+S";
+            modifiers = ModControl | ModShift;
+            key = (uint)Keys.S;
+        }
+
+        _isHotKeyRegistered = RegisterHotKey(Handle, HotKeyId, modifiers, key);
+        if (!_isHotKeyRegistered)
+        {
+            statusLabel.Text = "快捷键注册失败，请修改设置中的快捷键";
+        }
+    }
+
+    private static bool TryParseHotKey(string hotKey, out uint modifiers, out uint key)
+    {
+        modifiers = 0;
+        key = 0;
+        if (string.IsNullOrWhiteSpace(hotKey))
+        {
+            return false;
+        }
+
+        var parts = hotKey.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length < 2)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < parts.Length - 1; i++)
+        {
+            switch (parts[i].ToUpperInvariant())
+            {
+                case "CTRL":
+                case "CONTROL":
+                    modifiers |= ModControl;
+                    break;
+                case "SHIFT":
+                    modifiers |= ModShift;
+                    break;
+                case "ALT":
+                    modifiers |= ModAlt;
+                    break;
+                case "WIN":
+                case "WINDOWS":
+                    modifiers |= ModWin;
+                    break;
+                default:
+                    return false;
+            }
+        }
+
+        if (!Enum.TryParse<Keys>(parts[^1], true, out var parsed))
+        {
+            return false;
+        }
+
+        key = (uint)parsed;
+        return key != 0 && modifiers != 0;
     }
 
     [DllImport("user32.dll", SetLastError = true)]

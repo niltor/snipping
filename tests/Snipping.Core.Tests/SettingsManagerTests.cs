@@ -29,11 +29,44 @@ public sealed class SettingsManagerTests
             FileNamePrefix = "capture"
         };
 
-        await manager.SaveAsync(path, expected);
-        var actual = await manager.LoadAsync(path);
+        try
+        {
+            await manager.SaveAsync(path, expected);
+            var actual = await manager.LoadAsync(path);
 
-        Assert.Equal(expected.Hotkey, actual.Hotkey);
-        Assert.Equal(expected.JpegQuality, actual.JpegQuality);
-        Assert.Equal(expected.FileNamePrefix, actual.FileNamePrefix);
+            Assert.Equal(expected.Hotkey, actual.Hotkey);
+            Assert.Equal(expected.JpegQuality, actual.JpegQuality);
+            Assert.Equal(expected.FileNamePrefix, actual.FileNamePrefix);
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task LoadAsync_ReturnsDefault_WhenJsonIsInvalid()
+    {
+        var manager = new SettingsManager();
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var path = Path.Combine(dir, "settings.json");
+        Directory.CreateDirectory(dir);
+        await File.WriteAllTextAsync(path, "{invalid json");
+
+        try
+        {
+            var settings = await manager.LoadAsync(path);
+            Assert.Equal("Ctrl+Shift+S", settings.Hotkey);
+        }
+        finally
+        {
+            if (Directory.Exists(dir))
+            {
+                Directory.Delete(dir, recursive: true);
+            }
+        }
     }
 }

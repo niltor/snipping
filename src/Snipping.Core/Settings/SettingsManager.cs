@@ -17,9 +17,38 @@ public sealed class SettingsManager
         }
 
         await using var stream = File.OpenRead(filePath);
-        var settings = await JsonSerializer.DeserializeAsync<SnippingSettings>(stream, JsonOptions, cancellationToken) ?? new SnippingSettings();
+        SnippingSettings settings;
+        try
+        {
+            settings = await JsonSerializer.DeserializeAsync<SnippingSettings>(stream, JsonOptions, cancellationToken) ?? new SnippingSettings();
+        }
+        catch (JsonException)
+        {
+            settings = new SnippingSettings();
+        }
+
         Migrate(settings);
         return settings;
+    }
+
+    public SnippingSettings Load(string filePath)
+    {
+        if (!File.Exists(filePath))
+        {
+            return new SnippingSettings();
+        }
+
+        try
+        {
+            using var stream = File.OpenRead(filePath);
+            var settings = JsonSerializer.Deserialize<SnippingSettings>(stream, JsonOptions) ?? new SnippingSettings();
+            Migrate(settings);
+            return settings;
+        }
+        catch (JsonException)
+        {
+            return new SnippingSettings();
+        }
     }
 
     public async Task SaveAsync(string filePath, SnippingSettings settings, CancellationToken cancellationToken = default)

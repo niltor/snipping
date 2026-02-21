@@ -2,6 +2,7 @@ namespace Snipping.App;
 
 public sealed class RegionSelectionForm : Form
 {
+    private const int MinRegionLength = 2;
     private Point? _start;
     private Rectangle _current;
 
@@ -60,7 +61,7 @@ public sealed class RegionSelectionForm : Form
         }
 
         SelectedRegion = Normalize(_start.Value, PointToScreen(e.Location));
-        DialogResult = SelectedRegion.Width > 1 && SelectedRegion.Height > 1 ? DialogResult.OK : DialogResult.Cancel;
+        DialogResult = SelectedRegion.Width >= MinRegionLength && SelectedRegion.Height >= MinRegionLength ? DialogResult.OK : DialogResult.Cancel;
         Close();
     }
 
