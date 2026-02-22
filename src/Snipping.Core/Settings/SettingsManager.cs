@@ -107,5 +107,7 @@ public sealed class SettingsManager
         {
             settings.Language = "zh-CN";
         }
+
+        settings.PinWindowTransparencyPercent = Math.Clamp(settings.PinWindowTransparencyPercent, 0, 90);
     }
 }

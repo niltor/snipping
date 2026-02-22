@@ -8,7 +8,6 @@ namespace Snipping.WinUI;
 internal sealed class ShellIntegration : IDisposable
 {
     private const int HotKeyId = 1001;
-    private const int PinHotKeyId = 1002;
 
     private const uint WM_APP = 0x8000;
     private const uint WM_TRAYICON = WM_APP + 1;
@@ -143,7 +142,6 @@ internal sealed class ShellIntegration : IDisposable
         if (_hotKeyRegistered)
         {
             UnregisterHotKey(_hWnd, HotKeyId);
-            UnregisterHotKey(_hWnd, PinHotKeyId);
             _hotKeyRegistered = false;
         }
 
@@ -152,11 +150,9 @@ internal sealed class ShellIntegration : IDisposable
 
         var captureRegistered = modifiers != 0 && key != 0 && RegisterHotKey(_hWnd, HotKeyId, modifiers, key);
 
-        var pinRegistered = false;
-        if (TryParseHotkey(_settings.PinShortcut, out var pinModifiers, out var pinKey))
-            pinRegistered = RegisterHotKey(_hWnd, PinHotKeyId, pinModifiers, pinKey);
-
-        _hotKeyRegistered = captureRegistered || pinRegistered;
+        // Pin shortcut is intentionally NOT registered globally.
+        // Ctrl+T should only be handled inside capture editor state to avoid external interference.
+        _hotKeyRegistered = captureRegistered;
     }
 
     private bool TryParseHotkey(string hotkey, out uint modifiers, out uint key)
@@ -298,8 +294,6 @@ internal sealed class ShellIntegration : IDisposable
             case WM_HOTKEY:
                 if ((int)wParam == HotKeyId)
                     SafeInvoke(_captureAction);
-                else if ((int)wParam == PinHotKeyId)
-                    SafeInvoke(_pinAction);
                 return IntPtr.Zero;
 
             case WM_TRAYICON:
@@ -328,11 +322,8 @@ internal sealed class ShellIntegration : IDisposable
 
     public void Dispose()
     {
-        if (_hotKeyRegistered)
-        {
-            _ = UnregisterHotKey(_hWnd, HotKeyId);
-            _hotKeyRegistered = false;
-        }
+        _ = UnregisterHotKey(_hWnd, HotKeyId);
+        _hotKeyRegistered = false;
 
         var data = new NOTIFYICONDATA
         {

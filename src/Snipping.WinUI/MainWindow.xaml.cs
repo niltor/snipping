@@ -1,16 +1,17 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Windowing;
 using Snipping.Core.Export;
 using Snipping.Core.Settings;
 using System.Drawing;
 using System.Drawing.Imaging;
-using System.Runtime.InteropServices.WindowsRuntime;
 using Windows.ApplicationModel.DataTransfer;
-using Windows.Storage.Streams;
 using Windows.Storage.Pickers;
+using Windows.Storage.Streams;
 using Windows.System;
 using Windows.UI.Core;
+using WinRT.Interop;
 
 namespace Snipping.WinUI;
 
@@ -26,6 +27,7 @@ public sealed partial class MainWindow : Window
     private SnippingSettings _settings = new();
     private bool _captureInProgress;
     private bool _isLoaded;
+    private bool _allowClose;
 
     public event EventHandler<SnippingSettings>? SettingsSaved;
 
@@ -40,6 +42,21 @@ public sealed partial class MainWindow : Window
     {
         _isLoaded = true;
         ConfigureWindowSize();
+
+        var hwnd = WindowNative.GetWindowHandle(this);
+        var appWindow = Microsoft.UI.Windowing.AppWindow.GetFromWindowId(
+            Microsoft.UI.Win32Interop.GetWindowIdFromWindow(hwnd));
+        appWindow.Closing -= AppWindow_OnClosing;
+        appWindow.Closing += AppWindow_OnClosing;
+    }
+
+    private void AppWindow_OnClosing(AppWindow sender, AppWindowClosingEventArgs args)
+    {
+        if (_allowClose)
+            return;
+
+        args.Cancel = true;
+        HideSettingsWindow();
     }
 
     private void ConfigureWindowSize()
@@ -50,10 +67,10 @@ public sealed partial class MainWindow : Window
         var display = Microsoft.UI.Windowing.DisplayArea.GetFromWindowId(appWindow.Id,
             Microsoft.UI.Windowing.DisplayAreaFallback.Primary);
         var work = display.WorkArea;
-        const int w = 550, h = 400;
+        const int w = 860, h = 560;
         appWindow.Resize(new Windows.Graphics.SizeInt32(w, h));
         appWindow.Move(new Windows.Graphics.PointInt32(
-            work.X + (work.Width  - w) / 2,
+            work.X + (work.Width - w) / 2,
             work.Y + (work.Height - h) / 2));
     }
 
@@ -63,6 +80,7 @@ public sealed partial class MainWindow : Window
         HotkeyTextBox.Text = _settings.Hotkey;
         PinShortcutTextBox.Text = _settings.PinShortcut;
         SaveDirectoryTextBox.Text = _settings.SaveDirectory;
+        PinTransparencyNumberBox.Value = _settings.PinWindowTransparencyPercent;
 
         ThemeSystemRadio.IsChecked = _settings.Theme.Equals("System", StringComparison.OrdinalIgnoreCase);
         ThemeLightRadio.IsChecked = _settings.Theme.Equals("Light", StringComparison.OrdinalIgnoreCase);
@@ -83,6 +101,7 @@ public sealed partial class MainWindow : Window
         _settings.Hotkey = string.IsNullOrWhiteSpace(HotkeyTextBox.Text) ? _settings.Hotkey : HotkeyTextBox.Text.Trim();
         _settings.PinShortcut = string.IsNullOrWhiteSpace(PinShortcutTextBox.Text) ? _settings.PinShortcut : PinShortcutTextBox.Text.Trim();
         _settings.SaveDirectory = string.IsNullOrWhiteSpace(SaveDirectoryTextBox.Text) ? _settings.SaveDirectory : SaveDirectoryTextBox.Text.Trim();
+        _settings.PinWindowTransparencyPercent = (int)Math.Clamp(PinTransparencyNumberBox.Value, 0, 90);
         _settings.Theme = ThemeDarkRadio.IsChecked == true
             ? "Dark"
             : ThemeLightRadio.IsChecked == true
@@ -108,6 +127,7 @@ public sealed partial class MainWindow : Window
             CloseButtonText = _settings.Language.Equals("en-US", StringComparison.OrdinalIgnoreCase) ? "OK" : "确定"
         };
         _ = await dialog.ShowAsync();
+        HideSettingsWindow();
     }
 
     public async Task ShowCapturePlaceholderAsync()
@@ -117,10 +137,7 @@ public sealed partial class MainWindow : Window
 
         try
         {
-            using var bmp = await CaptureOverlayWindow.CaptureAsync(_settings, _exportManager);
-            if (bmp is null) return;
-
-            await CaptureEditorWindow.OpenAsync(bmp, _settings, _exportManager);
+            _ = await CaptureOverlayWindow.CaptureAsync(_settings, _exportManager);
         }
         catch (Exception ex)
         {
@@ -130,6 +147,8 @@ public sealed partial class MainWindow : Window
         finally
         {
             _captureInProgress = false;
+            var hwnd = WindowNative.GetWindowHandle(this);
+            ShowWindow(hwnd, SW_HIDE);
         }
     }
 
@@ -185,24 +204,61 @@ public sealed partial class MainWindow : Window
 
     public async Task PinClipboardImageAsync()
     {
-        var package = Clipboard.GetContent();
-        if (!package.Contains(StandardDataFormats.Bitmap))
+        if (await CaptureOverlayWindow.TryPinFromActiveOverlayAsync())
             return;
 
-        var streamRef = await package.GetBitmapAsync();
-        using var stream = await streamRef.OpenReadAsync();
-        using var netStream = stream.AsStreamForRead();
-        using var ms = new MemoryStream();
-        await netStream.CopyToAsync(ms);
-        ms.Position = 0;
+        if (App.TryGetLastCapture(out var cached) && cached is not null)
+        {
+            using (cached)
+            {
+                PinnedImageWindow.Open(cached, _settings.PinWindowTransparencyPercent);
+            }
+            return;
+        }
 
-        using var bmp = new Bitmap(ms);
-        PinnedImageWindow.Open((Bitmap)bmp);
+        var package = Clipboard.GetContent();
+        if (package.Contains(StandardDataFormats.Bitmap))
+        {
+            var streamRef = await package.GetBitmapAsync();
+            using var stream = await streamRef.OpenReadAsync();
+            using var netStream = stream.AsStreamForRead();
+            using var ms = new MemoryStream();
+            await netStream.CopyToAsync(ms);
+            ms.Position = 0;
+
+            using var bmp = new Bitmap(ms);
+            App.SetLastCapture(bmp);
+            PinnedImageWindow.Open((Bitmap)bmp, _settings.PinWindowTransparencyPercent);
+            return;
+        }
+
+        var ex = new InvalidOperationException(IsEnglish
+            ? "No image found in clipboard or recent captures."
+            : "剪贴板和最近截图中都没有可用图片。");
+        await ShowRuntimeErrorAsync(ex, "Pin failed", "贴图失败");
+    }
+
+    public void ShowSettingsWindow()
+    {
+        var hwnd = WindowNative.GetWindowHandle(this);
+        ShowWindow(hwnd, SW_SHOW);
+        Activate();
+    }
+
+    public void AllowCloseForExit()
+    {
+        _allowClose = true;
+    }
+
+    private void HideSettingsWindow()
+    {
+        var hwnd = WindowNative.GetWindowHandle(this);
+        ShowWindow(hwnd, SW_HIDE);
     }
 
     private void CancelButton_OnClick(object sender, RoutedEventArgs e)
     {
-        Close();
+        HideSettingsWindow();
     }
 
     private void ThemeRadio_OnChecked(object sender, RoutedEventArgs e)
@@ -239,12 +295,12 @@ public sealed partial class MainWindow : Window
         if (IsEnglish)
         {
             Title = "Snipping Settings";
-            TitleText.Text = "Snipping Settings";
             HotkeyLabel.Text = "Global snip shortcut";
             PinShortcutLabel.Text = "Pin shortcut";
             SaveDirectoryLabel.Text = "Save directory";
             ThemeLabel.Text = "Theme";
             LanguageLabel.Text = "Language";
+            PinTransparencyLabel.Text = "Pin transparency";
             HotkeyHintText.Text = "Click the box and press shortcut keys";
             ThemeSystemRadio.Content = "System";
             ThemeLightRadio.Content = "Light";
@@ -256,12 +312,12 @@ public sealed partial class MainWindow : Window
         else
         {
             Title = "截图设置";
-            TitleText.Text = "截图设置";
             HotkeyLabel.Text = "全局截图快捷键";
             PinShortcutLabel.Text = "置顶贴图快捷键";
             SaveDirectoryLabel.Text = "保存目录";
             ThemeLabel.Text = "主题";
             LanguageLabel.Text = "语言";
+            PinTransparencyLabel.Text = "贴图透明度";
             HotkeyHintText.Text = "点击输入框后直接按组合键";
             ThemeSystemRadio.Content = "跟随系统";
             ThemeLightRadio.Content = "浅色";
@@ -342,4 +398,10 @@ public sealed partial class MainWindow : Window
             _ => key.ToString()
         };
     }
+
+    private const int SW_HIDE = 0;
+    private const int SW_SHOW = 5;
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 }

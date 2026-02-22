@@ -10,10 +10,12 @@
 
     <!-- Image fills the entire borderless window; drag is handled by pointer event -->
     <Grid x:Name="RootGrid"
-          Background="Black"
+                    Background="Black"
           KeyDown="RootGrid_OnKeyDown"
           PointerPressed="RootGrid_OnPointerPressed"
+                    PointerMoved="RootGrid_OnPointerMoved"
+                    PointerReleased="RootGrid_OnPointerReleased"
           IsTabStop="True">
-        <Image x:Name="PinImage" Stretch="Uniform"/>
+                <Image x:Name="PinImage" Stretch="Fill"/>
     </Grid>
 </Window>

@@ -20,5 +20,7 @@ public sealed class SnippingSettings
     public string Theme { get; set; } = "System";
     /// <summary>UI language: zh-CN | en-US</summary>
     public string Language { get; set; } = "zh-CN";
+    /// <summary>Transparency percentage for pinned image window (0-90).</summary>
+    public int PinWindowTransparencyPercent { get; set; } = 10;
     public bool ShowPerformanceDegradeTip { get; set; } = true;
 }

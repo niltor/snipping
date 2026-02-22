@@ -7,6 +7,9 @@ namespace Snipping.WinUI;
 
 public partial class App : Application
 {
+    private static readonly object LastCaptureLock = new();
+    private static byte[]? _lastCapturePng;
+
     private MainWindow? _window;
     private readonly SettingsManager _settingsManager = new();
     private readonly string _settingsPath = Path.Combine(
@@ -23,12 +26,15 @@ public partial class App : Application
         {
             var settings = _settingsManager.Load(_settingsPath);
             var normalized = (settings.Theme ?? "System").Trim().ToLowerInvariant();
-            RequestedTheme = normalized switch
+            if (normalized == "dark")
             {
-                "dark"  => ApplicationTheme.Dark,
-                "light" => ApplicationTheme.Light,
-                _       => ApplicationTheme.Light   // default neutral
-            };
+                RequestedTheme = ApplicationTheme.Dark;
+            }
+            else if (normalized == "light")
+            {
+                RequestedTheme = ApplicationTheme.Light;
+            }
+            // "system" => keep default theme behavior (follow OS)
         }
         catch
         {
@@ -67,6 +73,49 @@ public partial class App : Application
         }
     }
 
+    internal static void SetLastCapture(System.Drawing.Bitmap bmp)
+    {
+        try
+        {
+            using var ms = new MemoryStream();
+            bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+            lock (LastCaptureLock)
+            {
+                _lastCapturePng = ms.ToArray();
+            }
+        }
+        catch
+        {
+            // best effort cache only
+        }
+    }
+
+    internal static bool TryGetLastCapture(out System.Drawing.Bitmap? bitmap)
+    {
+        bitmap = null;
+        try
+        {
+            byte[]? data;
+            lock (LastCaptureLock)
+            {
+                data = _lastCapturePng;
+            }
+
+            if (data is null || data.Length == 0)
+                return false;
+
+            using var ms = new MemoryStream(data);
+            using var img = new System.Drawing.Bitmap(ms);
+            bitmap = (System.Drawing.Bitmap)img.Clone();
+            return true;
+        }
+        catch
+        {
+            bitmap = null;
+            return false;
+        }
+    }
+
     protected override void OnLaunched(LaunchActivatedEventArgs args)
     {
         var settings = _settingsManager.Load(_settingsPath);
@@ -85,7 +134,7 @@ public partial class App : Application
             settings,
             captureAction:      () => _window.DispatcherQueue.TryEnqueue(() => _ = RunCaptureSafeAsync()),
             pinAction:          () => _window.DispatcherQueue.TryEnqueue(() => _ = RunPinSafeAsync()),
-            openSettingsAction: () => _window.DispatcherQueue.TryEnqueue(() => _window.Activate()),
+            openSettingsAction: () => _window.DispatcherQueue.TryEnqueue(() => _window.ShowSettingsWindow()),
             exitAction:         () => _window.DispatcherQueue.TryEnqueue(() => ShutdownApp()));
 
         // Apply ElementTheme + DWM title bar (runtime-safe; does NOT touch Application.RequestedTheme)
@@ -114,7 +163,6 @@ public partial class App : Application
 
         try
         {
-            _window.Activate();
             await _window.PinClipboardImageAsync();
         }
         catch (Exception ex)
@@ -171,8 +219,9 @@ public partial class App : Application
     private static void ApplyDwmDarkMode(IntPtr hwnd, bool isDark)
     {
         int value = isDark ? 1 : 0;
-        // DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+        // DWMWA_USE_IMMERSIVE_DARK_MODE = 20 (Win11/modern), 19 (some Win10 builds)
         DwmSetWindowAttribute(hwnd, 20, ref value, sizeof(int));
+        DwmSetWindowAttribute(hwnd, 19, ref value, sizeof(int));
     }
 
     [DllImport("dwmapi.dll")]
@@ -188,6 +237,7 @@ public partial class App : Application
     {
         _shell?.Dispose();
         _shell = null;
+        _window?.AllowCloseForExit();
         _window?.Close();
     }
 }
