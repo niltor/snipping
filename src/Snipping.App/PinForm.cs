@@ -13,7 +13,7 @@ public sealed class PinForm : Form
     private Point _dragOffset;
     private double _scale = 1.0;
 
-    public PinForm(Bitmap bitmap, Point screenLocation)
+    public PinForm(Bitmap bitmap, Point screenLocation, int pinOpacity)
     {
         _bitmap = bitmap;
 
@@ -25,6 +25,7 @@ public sealed class PinForm : Form
         ShowInTaskbar = false;
         DoubleBuffered = true;
         KeyPreview = true;
+        Opacity = Math.Clamp(pinOpacity, 1, 100) / 100d;
 
         var menu = new ContextMenuStrip();
         var copyItem = new ToolStripMenuItem("复制到剪贴板");

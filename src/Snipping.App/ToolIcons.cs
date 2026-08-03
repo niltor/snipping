@@ -41,11 +41,18 @@ internal static class ToolIcons
 
     public static void Text(Graphics g, Rectangle r, Color c)
     {
-        using var font = new Font("Segoe UI", r.Height * 0.5f, FontStyle.Bold, GraphicsUnit.Pixel);
+        // Keep the glyph visually comparable to the line-based tools.  The
+        // previous 50% font size left the actual letter height noticeably
+        // smaller because of the font's ascender/descender metrics.
+        var side = Math.Min(r.Width, r.Height);
+        // Increase the cap height while using the regular face so the glyph
+        // becomes larger without becoming visually heavier.
+        using var font = new Font("Segoe UI", side * 0.78f, FontStyle.Regular, GraphicsUnit.Pixel);
         using var brush = new SolidBrush(c);
+        var bounds = new Rectangle(r.X, r.Y - 1, r.Width, r.Height + 2);
         var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
         g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
-        g.DrawString("T", font, brush, r, sf);
+        g.DrawString("T", font, brush, bounds, sf);
     }
 
     public static void Highlight(Graphics g, Rectangle r, Color c)
@@ -100,24 +107,68 @@ internal static class ToolIcons
 
     public static void Undo(Graphics g, Rectangle r, Color c)
     {
-        var box = Deflate(r, 5);
-        using var pen = new Pen(c, 1.6f);
-        pen.CustomStartCap = new AdjustableArrowCap(3.5f, 3.5f);
+        var box = Deflate(r, 6);
+        using var pen = new Pen(c, 1.5f);
+        pen.CustomStartCap = new AdjustableArrowCap(3.2f, 3.2f);
         var arc = new RectangleF(box.X, box.Y, box.Width, box.Height);
         g.DrawArc(pen, arc, 200, 230);
+    }
+
+    public static void Ocr(Graphics g, Rectangle r, Color c)
+    {
+        var box = Deflate(r, 5);
+        using var pen = new Pen(c, 1.5f)
+        {
+            LineJoin = LineJoin.Round,
+            StartCap = LineCap.Round,
+            EndCap = LineCap.Round
+        };
+
+        // Four scan corners with a small letter A and baseline.
+        const int corner = 5;
+        g.DrawLine(pen, box.Left, box.Top + corner, box.Left, box.Top);
+        g.DrawLine(pen, box.Left, box.Top, box.Left + corner, box.Top);
+        g.DrawLine(pen, box.Right - corner, box.Top, box.Right, box.Top);
+        g.DrawLine(pen, box.Right, box.Top, box.Right, box.Top + corner);
+        g.DrawLine(pen, box.Left, box.Bottom - corner, box.Left, box.Bottom);
+        g.DrawLine(pen, box.Left, box.Bottom, box.Left + corner, box.Bottom);
+        g.DrawLine(pen, box.Right - corner, box.Bottom, box.Right, box.Bottom);
+        g.DrawLine(pen, box.Right, box.Bottom, box.Right, box.Bottom - corner);
+
+        var midX = box.X + box.Width / 2f;
+        var topY = box.Top + 6;
+        var bottomY = box.Bottom - 6;
+        g.DrawLine(pen, midX - 4, bottomY, midX, topY);
+        g.DrawLine(pen, midX, topY, midX + 4, bottomY);
+        g.DrawLine(pen, midX - 2.5f, box.Y + box.Height / 2f + 1, midX + 2.5f, box.Y + box.Height / 2f + 1);
     }
 
     public static void Save(Graphics g, Rectangle r, Color c)
     {
         var box = Deflate(r, 5);
-        using var pen = new Pen(c, 1.6f);
-        // Down arrow
-        var midX = box.X + box.Width / 2f;
-        g.DrawLine(pen, midX, box.Top, midX, box.Bottom - 4);
-        g.DrawLine(pen, box.Left + 3, box.Bottom - 7, midX, box.Bottom - 2);
-        g.DrawLine(pen, box.Right - 3, box.Bottom - 7, midX, box.Bottom - 2);
-        // Tray bottom
-        g.DrawLine(pen, box.Left, box.Bottom, box.Right, box.Bottom);
+        using var pen = new Pen(c, 1.6f)
+        {
+            LineJoin = LineJoin.Round,
+            StartCap = LineCap.Round,
+            EndCap = LineCap.Round
+        };
+
+        // A classic floppy-disk silhouette reads as "save" without suggesting
+        // download/export.  The clipped top-right corner and two labels make
+        // the meaning remain clear even at this small size.
+        var disk = new Rectangle(box.X + 1, box.Y, box.Width - 2, box.Height);
+        using var path = new GraphicsPath();
+        path.AddLine(disk.Left, disk.Top, disk.Right - 6, disk.Top);
+        path.AddLine(disk.Right - 6, disk.Top, disk.Right, disk.Top + 6);
+        path.AddLine(disk.Right, disk.Top + 6, disk.Right, disk.Bottom);
+        path.AddLine(disk.Right, disk.Bottom, disk.Left, disk.Bottom);
+        path.CloseFigure();
+        g.DrawPath(pen, path);
+
+        // Disk label and write-protect/notch detail.
+        g.DrawRectangle(pen, disk.Left + 4, disk.Top + 2, disk.Width - 10, 6);
+        g.DrawLine(pen, disk.Right - 6, disk.Top, disk.Right - 6, disk.Top + 6);
+        g.DrawRectangle(pen, disk.Left + 4, disk.Bottom - 8, disk.Width - 8, 5);
     }
 
     public static void Copy(Graphics g, Rectangle r, Color c)

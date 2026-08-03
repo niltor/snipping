@@ -1,14 +1,10 @@
-using System.Text.Json;
+using System.Globalization;
+using System.Text;
 
 namespace Snipping.Core.Settings;
 
 public sealed class SettingsManager
 {
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        WriteIndented = true
-    };
-
     public async Task<SnippingSettings> LoadAsync(string filePath, CancellationToken cancellationToken = default)
     {
         if (!File.Exists(filePath))
@@ -16,19 +12,19 @@ public sealed class SettingsManager
             return new SnippingSettings();
         }
 
-        await using var stream = File.OpenRead(filePath);
-        SnippingSettings settings;
         try
         {
-            settings = await JsonSerializer.DeserializeAsync<SnippingSettings>(stream, JsonOptions, cancellationToken) ?? new SnippingSettings();
+            var lines = await File.ReadAllLinesAsync(filePath, cancellationToken);
+            return Parse(lines);
         }
-        catch (JsonException)
+        catch (IOException)
         {
-            settings = new SnippingSettings();
+            return new SnippingSettings();
         }
-
-        Migrate(settings);
-        return settings;
+        catch (UnauthorizedAccessException)
+        {
+            return new SnippingSettings();
+        }
     }
 
     public SnippingSettings Load(string filePath)
@@ -40,12 +36,13 @@ public sealed class SettingsManager
 
         try
         {
-            using var stream = File.OpenRead(filePath);
-            var settings = JsonSerializer.Deserialize<SnippingSettings>(stream, JsonOptions) ?? new SnippingSettings();
-            Migrate(settings);
-            return settings;
+            return Parse(File.ReadAllLines(filePath));
         }
-        catch (JsonException)
+        catch (IOException)
+        {
+            return new SnippingSettings();
+        }
+        catch (UnauthorizedAccessException)
         {
             return new SnippingSettings();
         }
@@ -60,9 +57,118 @@ public sealed class SettingsManager
             Directory.CreateDirectory(dir);
         }
 
-        await using var stream = File.Create(filePath);
-        await JsonSerializer.SerializeAsync(stream, settings, JsonOptions, cancellationToken);
+        await File.WriteAllLinesAsync(filePath, Serialize(settings), Encoding.UTF8, cancellationToken);
     }
+
+    private static SnippingSettings Parse(IEnumerable<string> lines)
+    {
+        var settings = new SnippingSettings();
+
+        foreach (var rawLine in lines)
+        {
+            var line = rawLine.Trim();
+            if (line.Length == 0 || line.StartsWith('#') || line.StartsWith(';'))
+            {
+                continue;
+            }
+
+            var separator = line.IndexOf('=');
+            if (separator <= 0)
+            {
+                continue;
+            }
+
+            var key = line[..separator].Trim();
+            var value = line[(separator + 1)..].Trim();
+
+            switch (key)
+            {
+                case "Version":
+                    if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var version))
+                    {
+                        settings.Version = version;
+                    }
+                    break;
+                case "Hotkey":
+                    settings.Hotkey = value;
+                    break;
+                case "DefaultCaptureMode":
+                    if (Enum.TryParse<Capture.CaptureMode>(value, true, out var captureMode)
+                        && Enum.IsDefined(typeof(Capture.CaptureMode), captureMode))
+                    {
+                        settings.DefaultCaptureMode = captureMode;
+                    }
+                    break;
+                case "DefaultExportFormat":
+                    if (Enum.TryParse<Export.ExportFormat>(value, true, out var exportFormat)
+                        && Enum.IsDefined(typeof(Export.ExportFormat), exportFormat))
+                    {
+                        settings.DefaultExportFormat = exportFormat;
+                    }
+                    break;
+                case "JpegQuality":
+                    if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var jpegQuality))
+                    {
+                        settings.JpegQuality = jpegQuality;
+                    }
+                    break;
+                case "ShowEditorInTaskbar":
+                    if (bool.TryParse(value, out var showEditorInTaskbar))
+                    {
+                        settings.ShowEditorInTaskbar = showEditorInTaskbar;
+                    }
+                    break;
+                case "SaveDirectory":
+                    settings.SaveDirectory = value;
+                    break;
+                case "FileNamePrefix":
+                    settings.FileNamePrefix = value;
+                    break;
+                case "PinShortcut":
+                    settings.PinShortcut = value;
+                    break;
+                case "PinOpacity":
+                    if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var pinOpacity))
+                    {
+                        settings.PinOpacity = pinOpacity;
+                    }
+                    break;
+                case "Theme":
+                    settings.Theme = value;
+                    break;
+                case "Language":
+                    settings.Language = value;
+                    break;
+                case "ShowPerformanceDegradeTip":
+                    if (bool.TryParse(value, out var showPerformanceDegradeTip))
+                    {
+                        settings.ShowPerformanceDegradeTip = showPerformanceDegradeTip;
+                    }
+                    break;
+            }
+        }
+
+        Migrate(settings);
+        return settings;
+    }
+
+    private static string[] Serialize(SnippingSettings settings) =>
+    [
+        "# Snipping settings",
+        $"Version={settings.Version.ToString(CultureInfo.InvariantCulture)}",
+        $"Hotkey={settings.Hotkey}",
+        $"DefaultCaptureMode={settings.DefaultCaptureMode}",
+        $"DefaultExportFormat={settings.DefaultExportFormat}",
+        $"JpegQuality={settings.JpegQuality.ToString(CultureInfo.InvariantCulture)}",
+        $"ShowEditorInTaskbar={settings.ShowEditorInTaskbar.ToString(CultureInfo.InvariantCulture)}",
+        $"SaveDirectory={settings.SaveDirectory}",
+        $"FileNamePrefix={settings.FileNamePrefix}",
+        $"PinShortcut={settings.PinShortcut}",
+        $"PinOpacity={settings.PinOpacity.ToString(CultureInfo.InvariantCulture)}",
+        $"Theme={settings.Theme}",
+        $"Language={settings.Language}",
+        $"ShowPerformanceDegradeTip={settings.ShowPerformanceDegradeTip.ToString(CultureInfo.InvariantCulture)}"
+    ];
 
     private static void Migrate(SnippingSettings settings)
     {
@@ -72,6 +178,7 @@ public sealed class SettingsManager
         }
 
         settings.JpegQuality = Math.Clamp(settings.JpegQuality, 1, 100);
+        settings.PinOpacity = Math.Clamp(settings.PinOpacity, 1, 100);
         if (string.IsNullOrWhiteSpace(settings.Hotkey))
         {
             settings.Hotkey = "Ctrl+Shift+S";

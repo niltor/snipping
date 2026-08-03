@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 
@@ -7,16 +8,22 @@ namespace Snipping.App;
 /// A rounded-corner panel that simulates acrylic/frosted glass when a <see cref="BackdropSource"/>
 /// bitmap and source region are provided.
 /// </summary>
-public sealed class RoundedPanel : Panel
+public class RoundedPanel : Panel
 {
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public int CornerRadius { get; set; } = 8;
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public Color BorderColor { get; set; } = Color.FromArgb(70, 70, 70);
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public int BorderThickness { get; set; } = 1;
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public Color TintColor { get; set; } = Color.FromArgb(190, 30, 30, 30);
 
     /// <summary>Full screen bitmap used as the blur source.</summary>
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public Bitmap? BackdropSource { get; set; }
     /// <summary>Region (in bitmap coords) that is behind this panel.</summary>
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public Rectangle BackdropRegion { get; set; }
 
     public RoundedPanel()

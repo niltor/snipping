@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using Snipping.Core.Export;
+using Snipping.Core.Ocr;
 using Snipping.Core.Settings;
 
 namespace Snipping.App;
@@ -11,9 +12,11 @@ public sealed class SnippingApplicationContext : ApplicationContext
 
     private readonly SettingsManager _settingsManager = new();
     private readonly ExportManager _exportManager = new();
-    private readonly string _settingsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Snipping", "settings.json");
+    private readonly IOcrService _ocrService = new WindowsOcrService();
+    private readonly string _settingsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Snipping", "settings.ini");
 
     private readonly NotifyIcon _notifyIcon;
+    private readonly Icon _applicationIcon;
     private readonly HotKeyWindow _hotKeyWindow;
     private SnippingSettings _settings;
     private bool _hotkeyRegistered;
@@ -21,11 +24,12 @@ public sealed class SnippingApplicationContext : ApplicationContext
     public SnippingApplicationContext()
     {
         _settings = _settingsManager.Load(_settingsPath);
+        _applicationIcon = AppIcon.Create();
 
         _notifyIcon = new NotifyIcon
         {
             Text = "Snipping",
-            Icon = SystemIcons.Application,
+            Icon = _applicationIcon,
             Visible = true
         };
         _notifyIcon.DoubleClick += (_, _) => StartCapture();
@@ -117,6 +121,7 @@ public sealed class SnippingApplicationContext : ApplicationContext
 
             _settings.Hotkey = form.Hotkey;
             _settings.PinShortcut = string.IsNullOrWhiteSpace(form.PinShortcut) ? _settings.PinShortcut : form.PinShortcut;
+            _settings.PinOpacity = form.PinOpacity;
             _settings.SaveDirectory = string.IsNullOrWhiteSpace(form.SaveDirectory) ? _settings.SaveDirectory : form.SaveDirectory;
             _settings.Theme = form.Theme;
             _settings.Language = form.Language;
@@ -130,12 +135,12 @@ public sealed class SnippingApplicationContext : ApplicationContext
 
     internal void StartCapture()
     {
-        var overlay = new DesktopSnippingOverlayForm(_settings, _exportManager);
+        var overlay = new DesktopSnippingOverlayForm(_settings, _exportManager, _ocrService);
         overlay.ShowDialog();
 
         if (overlay.PinResult is not null)
         {
-            var pin = new PinForm(overlay.PinResult.Bitmap, overlay.PinResult.ScreenLocation);
+            var pin = new PinForm(overlay.PinResult.Bitmap, overlay.PinResult.ScreenLocation, _settings.PinOpacity);
             pin.Show();
         }
 
@@ -157,6 +162,7 @@ public sealed class SnippingApplicationContext : ApplicationContext
 
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
+        _applicationIcon.Dispose();
         _hotKeyWindow.DestroyHandle();
 
         base.ExitThreadCore();

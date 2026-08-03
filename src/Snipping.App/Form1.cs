@@ -17,7 +17,7 @@ public partial class Form1 : Form
     private const uint ModWin = 0x0008;
     private readonly SettingsManager _settingsManager = new();
     private readonly ExportManager _exportManager = new();
-    private readonly string _settingsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Snipping", "settings.json");
+    private readonly string _settingsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Snipping", "settings.ini");
     private SnippingSettings _settings = new();
     private Bitmap? _canvas;
     private Point? _dragStart;

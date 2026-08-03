@@ -1,24 +1,36 @@
+using System.ComponentModel;
 using System.Drawing.Drawing2D;
 
 namespace Snipping.App;
 
 public sealed class RoundedButton : Control
 {
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public int CornerRadius { get; set; } = 6;
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public Color IdleColor { get; set; } = Color.FromArgb(38, 38, 38);
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public Color HoverColor { get; set; } = Color.FromArgb(55, 55, 55);
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public Color PressedColor { get; set; } = Color.FromArgb(70, 70, 70);
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public Color SelectedColor { get; set; } = Color.FromArgb(0, 90, 158);
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public bool IsSelected { get; set; }
 
     /// <summary>Border drawn around the button when selected (e.g. white ring for color dots).</summary>
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public Color SelectedBorderColor { get; set; } = Color.Transparent;
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public int SelectedBorderWidth { get; set; } = 2;
 
     /// <summary>
     /// GDI+ icon painter: (Graphics g, Rectangle contentBounds, Color iconColor)
     /// </summary>
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
     public Action<Graphics, Rectangle, Color>? IconPainter { get; set; }
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public int IconPadding { get; set; } = 1;
 
     private bool _isHovered;
     private bool _isPressed;
@@ -79,7 +91,9 @@ public sealed class RoundedButton : Control
         // Icon or text
         if (IconPainter is not null)
         {
-            IconPainter(g, ClientRectangle, ForeColor);
+            var content = ClientRectangle;
+            content.Inflate(-IconPadding, -IconPadding);
+            IconPainter(g, content, ForeColor);
         }
         else if (!string.IsNullOrEmpty(Text))
         {

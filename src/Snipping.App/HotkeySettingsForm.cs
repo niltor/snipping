@@ -9,9 +9,11 @@ public sealed class HotkeySettingsForm : Form
     private readonly TextBox _hotkeyTextBox;
     private readonly TextBox _saveDirectoryTextBox;
     private readonly TextBox _pinShortcutTextBox;
+    private readonly NumericUpDown _pinOpacityNumeric;
     private readonly Panel _card;
     private readonly Label _hotkeyLabel;
     private readonly Label _pinLabel;
+    private readonly Label _pinOpacityLabel;
     private readonly Label _saveLabel;
     private readonly Label _hotkeyHint;
     private readonly Label _themeLabel;
@@ -24,6 +26,7 @@ public sealed class HotkeySettingsForm : Form
     private readonly Button _okButton;
     private readonly Button _cancelButton;
     private readonly Button _browseButton;
+    private readonly Icon _windowIcon;
 
     private Color _cardBorderColor;
     private bool _currentDark;
@@ -31,24 +34,27 @@ public sealed class HotkeySettingsForm : Form
     public string Hotkey => _hotkeyTextBox.Text.Trim();
     public string SaveDirectory => _saveDirectoryTextBox.Text.Trim();
     public string PinShortcut => _pinShortcutTextBox.Text.Trim();
+    public int PinOpacity => (int)_pinOpacityNumeric.Value;
     public string Theme => _themeDarkRadio.Checked ? "Dark" : _themeLightRadio.Checked ? "Light" : "System";
     public string Language => (_languageCombo.SelectedItem as LanguageOption)?.Value ?? "zh-CN";
 
     public HotkeySettingsForm(SnippingSettings settings)
     {
         Text = "截图设置";
+        _windowIcon = AppIcon.Create();
+        Icon = _windowIcon;
         Font = new Font("Segoe UI", 10f, FontStyle.Regular, GraphicsUnit.Point);
         FormBorderStyle = FormBorderStyle.Sizable;
         MaximizeBox = false;
         MinimizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(640, 430);
-        Size = new Size(720, 480);
+        MinimumSize = new Size(640, 460);
+        Size = new Size(720, 510);
 
         var root = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            Padding = new Padding(16),
+            Padding = new Padding(12),
             ColumnCount = 1,
             RowCount = 2,
             BackColor = Color.Transparent
@@ -59,8 +65,8 @@ public sealed class HotkeySettingsForm : Form
         _card = new Panel
         {
             Dock = DockStyle.Fill,
-            Padding = new Padding(16),
-            Margin = new Padding(0, 0, 0, 12)
+            Padding = new Padding(12),
+            Margin = new Padding(0, 0, 0, 8)
         };
         _card.Paint += (_, e) =>
         {
@@ -75,7 +81,7 @@ public sealed class HotkeySettingsForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 3,
-            RowCount = 6,
+            RowCount = 7,
             BackColor = Color.Transparent
         };
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
@@ -83,6 +89,7 @@ public sealed class HotkeySettingsForm : Form
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 170));
         grid.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // hotkey
         grid.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // pin
+        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // pin opacity
         grid.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // save
         grid.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // theme
         grid.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // language
@@ -95,6 +102,18 @@ public sealed class HotkeySettingsForm : Form
         _pinLabel = CreateLabel("置顶贴图快捷键");
         _pinShortcutTextBox = CreateInputBox(settings.PinShortcut, readOnly: true);
         AttachShortcutCapture(_pinShortcutTextBox);
+
+        _pinOpacityLabel = CreateLabel("贴图不透明度 (%)");
+        _pinOpacityNumeric = new NumericUpDown
+        {
+            Minimum = 1,
+            Maximum = 100,
+            Value = Math.Clamp(settings.PinOpacity, 1, 100),
+            Increment = 1,
+            Width = 120,
+            Anchor = AnchorStyles.Left,
+            Margin = new Padding(0, 2, 0, 6)
+        };
 
         _saveLabel = CreateLabel("保存目录");
         _saveDirectoryTextBox = CreateInputBox(settings.SaveDirectory, readOnly: false);
@@ -115,8 +134,8 @@ public sealed class HotkeySettingsForm : Form
         {
             Dock = DockStyle.Fill,
             AutoSize = true,
-            Padding = new Padding(10, 8, 10, 8),
-            Margin = new Padding(0, 4, 0, 8)
+            Padding = new Padding(8, 6, 8, 6),
+            Margin = new Padding(0, 2, 0, 6)
         };
         var themeFlow = new FlowLayoutPanel
         {
@@ -145,7 +164,7 @@ public sealed class HotkeySettingsForm : Form
             Dock = DockStyle.Left,
             Width = 220,
             DropDownStyle = ComboBoxStyle.DropDownList,
-            Margin = new Padding(0, 4, 0, 8)
+            Margin = new Padding(0, 2, 0, 6)
         };
         _languageCombo.Items.Add(new LanguageOption("zh-CN", "中文 (简体)"));
         _languageCombo.Items.Add(new LanguageOption("en-US", "English"));
@@ -161,7 +180,7 @@ public sealed class HotkeySettingsForm : Form
             AutoSize = true,
             Text = "点击输入框后\n直接按组合键\n(如 Ctrl+Shift+S)",
             BackColor = Color.Transparent,
-            Padding = new Padding(8, 2, 0, 0)
+            Padding = new Padding(6, 1, 0, 0)
         };
 
         var saveRowPanel = new TableLayoutPanel
@@ -188,16 +207,19 @@ public sealed class HotkeySettingsForm : Form
         grid.Controls.Add(_pinLabel, 0, 1);
         grid.Controls.Add(_pinShortcutTextBox, 1, 1);
 
-        grid.Controls.Add(_saveLabel, 0, 2);
-        grid.Controls.Add(saveRowPanel, 1, 2);
+        grid.Controls.Add(_pinOpacityLabel, 0, 2);
+        grid.Controls.Add(_pinOpacityNumeric, 1, 2);
+
+        grid.Controls.Add(_saveLabel, 0, 3);
+        grid.Controls.Add(saveRowPanel, 1, 3);
         grid.SetColumnSpan(saveRowPanel, 2);
 
-        grid.Controls.Add(_themeLabel, 0, 3);
-        grid.Controls.Add(_themeGroup, 1, 3);
+        grid.Controls.Add(_themeLabel, 0, 4);
+        grid.Controls.Add(_themeGroup, 1, 4);
         grid.SetColumnSpan(_themeGroup, 2);
 
-        grid.Controls.Add(_languageLabel, 0, 4);
-        grid.Controls.Add(_languageCombo, 1, 4);
+        grid.Controls.Add(_languageLabel, 0, 5);
+        grid.Controls.Add(_languageCombo, 1, 5);
 
         _card.Controls.Add(grid);
 
@@ -257,7 +279,10 @@ public sealed class HotkeySettingsForm : Form
     protected override void Dispose(bool disposing)
     {
         if (disposing)
+        {
             SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
+            _windowIcon.Dispose();
+        }
 
         base.Dispose(disposing);
     }
@@ -267,7 +292,7 @@ public sealed class HotkeySettingsForm : Form
         Dock = DockStyle.None,
         Anchor = AnchorStyles.Left,
         AutoSize = true,
-        Margin = new Padding(0, 6, 8, 6),
+        Margin = new Padding(0, 4, 6, 4),
         Text = text,
         BackColor = Color.Transparent,
         TextAlign = ContentAlignment.MiddleLeft
@@ -276,7 +301,7 @@ public sealed class HotkeySettingsForm : Form
     private static TextBox CreateInputBox(string value, bool readOnly) => new()
     {
         Dock = DockStyle.Fill,
-        Margin = new Padding(0, 4, 0, 8),
+        Margin = new Padding(0, 2, 0, 6),
         Text = value,
         ReadOnly = readOnly,
         BorderStyle = BorderStyle.FixedSingle
@@ -380,6 +405,7 @@ public sealed class HotkeySettingsForm : Form
 
         _hotkeyLabel.ForeColor = text;
         _pinLabel.ForeColor = text;
+        _pinOpacityLabel.ForeColor = text;
         _saveLabel.ForeColor = text;
         _themeLabel.ForeColor = text;
         _languageLabel.ForeColor = text;
@@ -396,6 +422,8 @@ public sealed class HotkeySettingsForm : Form
         ApplyTextBoxTheme(_hotkeyTextBox, inputBg, text);
         ApplyTextBoxTheme(_pinShortcutTextBox, inputBg, text);
         ApplyTextBoxTheme(_saveDirectoryTextBox, inputBg, text);
+        _pinOpacityNumeric.BackColor = inputBg;
+        _pinOpacityNumeric.ForeColor = text;
 
         _languageCombo.BackColor = inputBg;
         _languageCombo.ForeColor = text;

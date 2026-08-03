@@ -16,6 +16,7 @@ public sealed class SnippingSettings
     public string SaveDirectory { get; set; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), "Snipping");
     public string FileNamePrefix { get; set; } = "snip";
     public string PinShortcut { get; set; } = "Ctrl+T";
+    public int PinOpacity { get; set; } = 90;
     /// <summary>Theme preference: System | Light | Dark</summary>
     public string Theme { get; set; } = "System";
     /// <summary>UI language: zh-CN | en-US</summary>
