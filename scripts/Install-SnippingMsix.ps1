@@ -84,6 +84,9 @@ try {
     Add-AppxPackage -Path (Resolve-Path -LiteralPath $MsixPath).Path
 }
 catch {
+    if ($_.Exception.Message -match "0x80073CFB") {
+        throw "MSIX 版本号与已安装版本相同但内容不同。请提高 Build-Msix.ps1 的 -Version 后重新打包。原始错误：$($_.Exception.Message)"
+    }
     if (-not $InstallMachineCertificate) {
         throw "MSIX 安装失败。若这是该开发证书首次安装，请传入 -CertificatePath .cer；脚本会通过 sudo 自动提权并只在首次导入证书时需要管理员权限。原始错误：$($_.Exception.Message)"
     }

@@ -21,5 +21,8 @@ public sealed class SnippingSettings
     public string Theme { get; set; } = "System";
     /// <summary>UI language: zh-CN | en-US</summary>
     public string Language { get; set; } = "zh-CN";
+    /// <summary>Preferred OCR language tag; empty means automatic selection.</summary>
+    public string OcrPreferredLanguage { get; set; } = string.Empty;
+    public bool StartWithWindows { get; set; }
     public bool ShowPerformanceDegradeTip { get; set; } = true;
 }

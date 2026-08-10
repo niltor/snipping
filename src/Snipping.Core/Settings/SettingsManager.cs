@@ -139,6 +139,15 @@ public sealed class SettingsManager
                 case "Language":
                     settings.Language = value;
                     break;
+                case "OcrPreferredLanguage":
+                    settings.OcrPreferredLanguage = value;
+                    break;
+                case "StartWithWindows":
+                    if (bool.TryParse(value, out var startWithWindows))
+                    {
+                        settings.StartWithWindows = startWithWindows;
+                    }
+                    break;
                 case "ShowPerformanceDegradeTip":
                     if (bool.TryParse(value, out var showPerformanceDegradeTip))
                     {
@@ -167,6 +176,8 @@ public sealed class SettingsManager
         $"PinOpacity={settings.PinOpacity.ToString(CultureInfo.InvariantCulture)}",
         $"Theme={settings.Theme}",
         $"Language={settings.Language}",
+        $"OcrPreferredLanguage={settings.OcrPreferredLanguage}",
+        $"StartWithWindows={settings.StartWithWindows.ToString(CultureInfo.InvariantCulture)}",
         $"ShowPerformanceDegradeTip={settings.ShowPerformanceDegradeTip.ToString(CultureInfo.InvariantCulture)}"
     ];
 
@@ -214,5 +225,7 @@ public sealed class SettingsManager
         {
             settings.Language = "zh-CN";
         }
+
+        settings.OcrPreferredLanguage = settings.OcrPreferredLanguage?.Trim() ?? string.Empty;
     }
 }

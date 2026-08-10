@@ -18,17 +18,35 @@ public sealed class HotkeySettingsForm : Form
     private readonly Label _hotkeyHint;
     private readonly Label _themeLabel;
     private readonly Label _languageLabel;
+    private readonly Label _ocrLanguageLabel;
+    private readonly Label _startupLabel;
     private readonly GroupBox _themeGroup;
     private readonly RadioButton _themeSystemRadio;
     private readonly RadioButton _themeLightRadio;
     private readonly RadioButton _themeDarkRadio;
     private readonly ComboBox _languageCombo;
+    private readonly ComboBox _ocrLanguageCombo;
+    private readonly CheckBox _startupCheckBox;
+    private readonly ThemedTabControl _tabs;
+    private readonly Panel _generalTab;
+    private readonly Panel _advancedTab;
+    private readonly Panel _aboutTab;
+    private readonly Label _advancedTitle;
+    private readonly Label _advancedHint;
+    private readonly Label _aboutTitle;
+    private readonly Label _aboutVersionLabel;
+    private readonly Label _aboutWebsiteLabel;
+    private readonly LinkLabel _aboutWebsiteLink;
+    private readonly Label _aboutAuthorLabel;
     private readonly Button _okButton;
     private readonly Button _cancelButton;
     private readonly Button _browseButton;
     private readonly Icon _windowIcon;
 
     private Color _cardBorderColor;
+    private Color _tabHeaderColor;
+    private Color _tabSelectedColor;
+    private Color _tabBorderColor;
     private bool _currentDark;
 
     public string Hotkey => _hotkeyTextBox.Text.Trim();
@@ -37,6 +55,9 @@ public sealed class HotkeySettingsForm : Form
     public int PinOpacity => (int)_pinOpacityNumeric.Value;
     public string Theme => _themeDarkRadio.Checked ? "Dark" : _themeLightRadio.Checked ? "Light" : "System";
     public string Language => (_languageCombo.SelectedItem as LanguageOption)?.Value ?? "zh-CN";
+    public string OcrPreferredLanguage =>
+        (_ocrLanguageCombo.SelectedItem as WindowsOcrService.OcrLanguageOption)?.Value ?? string.Empty;
+    public bool StartWithWindows => _startupCheckBox.Checked;
 
     public HotkeySettingsForm(SnippingSettings settings)
     {
@@ -81,7 +102,7 @@ public sealed class HotkeySettingsForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 3,
-            RowCount = 7,
+            RowCount = 9,
             BackColor = Color.Transparent
         };
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
@@ -93,6 +114,8 @@ public sealed class HotkeySettingsForm : Form
         grid.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // save
         grid.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // theme
         grid.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // language
+        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // OCR language
+        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // startup
         grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
         _hotkeyLabel = CreateLabel("全局截图快捷键");
@@ -164,14 +187,44 @@ public sealed class HotkeySettingsForm : Form
             Dock = DockStyle.Left,
             Width = 220,
             DropDownStyle = ComboBoxStyle.DropDownList,
+            DropDownHeight = 180,
+            DrawMode = DrawMode.OwnerDrawFixed,
+            ItemHeight = 24,
+            FlatStyle = FlatStyle.Flat,
             Margin = new Padding(0, 2, 0, 6)
         };
+        _languageCombo.DrawItem += (_, e) => DrawComboItem(_languageCombo, e);
         _languageCombo.Items.Add(new LanguageOption("zh-CN", "中文 (简体)"));
         _languageCombo.Items.Add(new LanguageOption("en-US", "English"));
         _languageCombo.SelectedIndexChanged += (_, _) =>
         {
             ApplyLanguageTexts();
             ApplyTheme();
+        };
+
+        _ocrLanguageLabel = CreateLabel("OCR 偏好语言");
+        _ocrLanguageCombo = new ComboBox
+        {
+            Dock = DockStyle.Left,
+            Width = 300,
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            DropDownHeight = 260,
+            DrawMode = DrawMode.OwnerDrawFixed,
+            ItemHeight = 24,
+            FlatStyle = FlatStyle.Flat,
+            Margin = new Padding(0, 2, 0, 6)
+        };
+        _ocrLanguageCombo.DrawItem += (_, e) => DrawComboItem(_ocrLanguageCombo, e);
+        _ocrLanguageCombo.Items.Add(new WindowsOcrService.OcrLanguageOption("", "无（自动选择）"));
+        foreach (var language in WindowsOcrService.GetAvailableLanguages())
+            _ocrLanguageCombo.Items.Add(language);
+
+        _startupLabel = CreateLabel("开机自启");
+        _startupCheckBox = new CheckBox
+        {
+            AutoSize = true,
+            Checked = settings.StartWithWindows,
+            Margin = new Padding(0, 3, 0, 6)
         };
 
         _hotkeyHint = new Label
@@ -221,7 +274,129 @@ public sealed class HotkeySettingsForm : Form
         grid.Controls.Add(_languageLabel, 0, 5);
         grid.Controls.Add(_languageCombo, 1, 5);
 
+        grid.Controls.Add(_ocrLanguageLabel, 0, 6);
+        grid.Controls.Add(_ocrLanguageCombo, 1, 6);
+
+        grid.Controls.Add(_startupLabel, 0, 7);
+        grid.Controls.Add(_startupCheckBox, 1, 7);
+
         _card.Controls.Add(grid);
+
+        _generalTab = new Panel
+        {
+            Padding = new Padding(8)
+        };
+        _generalTab.Controls.Add(_card);
+
+        _advancedTab = new Panel
+        {
+            Padding = new Padding(16)
+        };
+        var advancedFlow = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            AutoScroll = true,
+            BackColor = Color.Transparent,
+            Padding = new Padding(4)
+        };
+        _advancedTitle = new Label
+        {
+            AutoSize = true,
+            Font = new Font("Segoe UI", 13f, FontStyle.Bold),
+            Margin = new Padding(0, 0, 0, 8),
+            BackColor = Color.Transparent
+        };
+        _advancedHint = new Label
+        {
+            AutoSize = true,
+            MaximumSize = new Size(580, 0),
+            Margin = new Padding(0),
+            BackColor = Color.Transparent
+        };
+        advancedFlow.Controls.Add(_advancedTitle);
+        advancedFlow.Controls.Add(_advancedHint);
+        _advancedTab.Controls.Add(advancedFlow);
+
+        _aboutTab = new Panel
+        {
+            Padding = new Padding(16)
+        };
+        var aboutFlow = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.TopDown,
+            WrapContents = false,
+            AutoScroll = true,
+            BackColor = Color.Transparent,
+            Padding = new Padding(4)
+        };
+        _aboutTitle = new Label
+        {
+            AutoSize = true,
+            Font = new Font("Segoe UI", 16f, FontStyle.Bold),
+            Margin = new Padding(0, 0, 0, 12),
+            BackColor = Color.Transparent
+        };
+        _aboutVersionLabel = new Label
+        {
+            AutoSize = true,
+            Margin = new Padding(0, 0, 0, 8),
+            BackColor = Color.Transparent
+        };
+        _aboutWebsiteLabel = new Label
+        {
+            AutoSize = true,
+            Margin = new Padding(0, 0, 0, 2),
+            BackColor = Color.Transparent
+        };
+        _aboutWebsiteLink = new LinkLabel
+        {
+            AutoSize = true,
+            Text = "dusi.dev",
+            AccessibleName = "dusi.dev",
+            Margin = new Padding(0, 0, 0, 10),
+            BackColor = Color.Transparent
+        };
+        _aboutWebsiteLink.LinkClicked += (_, _) =>
+        {
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "https://dusi.dev",
+                    UseShellExecute = true
+                });
+            }
+            catch
+            {
+                // The link is informational; ignore shell failures.
+            }
+        };
+        _aboutAuthorLabel = new Label
+        {
+            AutoSize = true,
+            Margin = new Padding(0),
+            BackColor = Color.Transparent
+        };
+        aboutFlow.Controls.Add(_aboutTitle);
+        aboutFlow.Controls.Add(_aboutVersionLabel);
+        aboutFlow.Controls.Add(_aboutWebsiteLabel);
+        aboutFlow.Controls.Add(_aboutWebsiteLink);
+        aboutFlow.Controls.Add(_aboutAuthorLabel);
+        _aboutTab.Controls.Add(aboutFlow);
+
+        _tabs = new ThemedTabControl
+        {
+            Dock = DockStyle.Fill,
+            Margin = new Padding(0),
+            ItemSize = new Size(104, 32)
+        };
+        _tabs.SelectedIndexChanged += (_, _) => _tabs.Invalidate();
+        _tabs.AddPage(_generalTab);
+        _tabs.AddPage(_advancedTab);
+        _tabs.AddPage(_aboutTab);
 
         _okButton = new Button
         {
@@ -250,12 +425,13 @@ public sealed class HotkeySettingsForm : Form
         footer.Controls.Add(_cancelButton);
         footer.Controls.Add(_okButton);
 
-        root.Controls.Add(_card, 0, 0);
+        root.Controls.Add(_tabs, 0, 0);
         root.Controls.Add(footer, 0, 1);
         Controls.Add(root);
 
         SetThemeSelection(settings.Theme);
         SetLanguageSelection(settings.Language);
+        SetOcrLanguageSelection(settings.OcrPreferredLanguage);
 
         AcceptButton = _okButton;
         CancelButton = _cancelButton;
@@ -341,6 +517,15 @@ public sealed class HotkeySettingsForm : Form
         _languageCombo.SelectedItem = match ?? _languageCombo.Items.OfType<LanguageOption>().First(x => x.Value == "zh-CN");
     }
 
+    private void SetOcrLanguageSelection(string? language)
+    {
+        var match = _ocrLanguageCombo.Items
+            .OfType<WindowsOcrService.OcrLanguageOption>()
+            .FirstOrDefault(x => x.Value.Equals(language ?? string.Empty, StringComparison.OrdinalIgnoreCase));
+        _ocrLanguageCombo.SelectedItem = match
+            ?? _ocrLanguageCombo.Items.OfType<WindowsOcrService.OcrLanguageOption>().First();
+    }
+
     private bool IsEnglishSelected() => Language.Equals("en-US", StringComparison.OrdinalIgnoreCase);
 
     private void ApplyLanguageTexts()
@@ -348,11 +533,18 @@ public sealed class HotkeySettingsForm : Form
         var en = IsEnglishSelected();
 
         Text = en ? "Snipping Settings" : "截图设置";
+        _generalTab.Text = en ? "General" : "常规";
+        _advancedTab.Text = en ? "Advanced" : "高级";
+        _aboutTab.Text = en ? "About" : "关于";
         _hotkeyLabel.Text = en ? "Global snip shortcut" : "全局截图快捷键";
         _pinLabel.Text = en ? "Pin shortcut" : "置顶贴图快捷键";
+        _pinOpacityLabel.Text = en ? "Pin opacity (%)" : "贴图不透明度 (%)";
         _saveLabel.Text = en ? "Save directory" : "保存目录";
         _themeLabel.Text = en ? "Theme" : "主题";
         _languageLabel.Text = en ? "Language" : "语言";
+        _ocrLanguageLabel.Text = en ? "OCR preference" : "OCR 偏好语言";
+        _startupLabel.Text = en ? "Startup" : "开机自启";
+        _startupCheckBox.Text = en ? "Start Snipping with Windows" : "随 Windows 启动";
 
         _hotkeyHint.Text = en
             ? "Click a shortcut box,\nthen press keys directly\n(e.g. Ctrl+Shift+S)"
@@ -363,10 +555,34 @@ public sealed class HotkeySettingsForm : Form
         _themeLightRadio.Text = en ? "Light" : "浅色";
         _themeDarkRadio.Text = en ? "Dark" : "深色";
 
+        _advancedTitle.Text = en ? "Advanced features" : "高级功能";
+        _advancedHint.Text = en
+            ? "Features and settings for the paid Microsoft Store edition will appear here."
+            : "这里将用于放置 Microsoft Store 付费版解锁的功能和配置。当前暂未开放。";
+
+        _aboutTitle.Text = en ? "About Snipping" : "关于 Snipping";
+        _aboutVersionLabel.Text = en
+            ? $"Version: {GetApplicationVersion()}"
+            : $"软件版本：{GetApplicationVersion()}";
+        _aboutWebsiteLabel.Text = en ? "Official website:" : "官方网站：";
+        _aboutAuthorLabel.Text = en ? "Author: NilTor" : "作者：NilTor";
+
+        if (_ocrLanguageCombo.Items.Count > 0)
+        {
+            var selected = OcrPreferredLanguage;
+            _ocrLanguageCombo.Items[0] = new WindowsOcrService.OcrLanguageOption(
+                string.Empty,
+                en ? "None (automatic)" : "无（自动选择）");
+            SetOcrLanguageSelection(selected);
+        }
+
         _browseButton.Text = en ? "Browse" : "浏览";
         _okButton.Text = en ? "Save" : "保存";
         _cancelButton.Text = en ? "Cancel" : "取消";
     }
+
+    private static string GetApplicationVersion() =>
+        typeof(HotkeySettingsForm).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
 
     private void OnUserPreferenceChanged(object? sender, UserPreferenceChangedEventArgs e)
     {
@@ -397,9 +613,23 @@ public sealed class HotkeySettingsForm : Form
         var text = dark ? Color.FromArgb(245, 245, 245) : Color.FromArgb(20, 20, 20);
         var subText = dark ? Color.FromArgb(184, 184, 184) : Color.FromArgb(90, 90, 90);
         var inputBg = dark ? Color.FromArgb(46, 46, 46) : Color.White;
+        _tabHeaderColor = dark ? Color.FromArgb(34, 34, 34) : Color.FromArgb(232, 232, 232);
+        _tabSelectedColor = dark ? Color.FromArgb(58, 58, 58) : Color.White;
+        _tabBorderColor = dark ? Color.FromArgb(86, 86, 86) : Color.FromArgb(198, 198, 198);
 
         BackColor = bg;
         ForeColor = text;
+
+        _tabs.BackColor = bg;
+        _tabs.ForeColor = text;
+        _tabs.HeaderColor = _tabHeaderColor;
+        _tabs.SelectedHeaderColor = _tabSelectedColor;
+        _tabs.HeaderBorderColor = _tabBorderColor;
+        _tabs.HeaderTextColor = text;
+        _generalTab.BackColor = bg;
+        _advancedTab.BackColor = bg;
+        _aboutTab.BackColor = bg;
+        _tabs.Invalidate();
 
         _card.BackColor = cardBg;
 
@@ -419,6 +649,16 @@ public sealed class HotkeySettingsForm : Form
         _themeDarkRadio.BackColor = Color.Transparent;
         _hotkeyHint.ForeColor = subText;
 
+        _advancedTitle.ForeColor = text;
+        _advancedHint.ForeColor = subText;
+        _aboutTitle.ForeColor = text;
+        _aboutVersionLabel.ForeColor = subText;
+        _aboutWebsiteLabel.ForeColor = subText;
+        _aboutAuthorLabel.ForeColor = text;
+        _aboutWebsiteLink.LinkColor = dark ? Color.FromArgb(100, 180, 255) : Color.FromArgb(0, 102, 204);
+        _aboutWebsiteLink.ActiveLinkColor = dark ? Color.FromArgb(150, 210, 255) : Color.FromArgb(0, 78, 160);
+        _aboutWebsiteLink.VisitedLinkColor = _aboutWebsiteLink.LinkColor;
+
         ApplyTextBoxTheme(_hotkeyTextBox, inputBg, text);
         ApplyTextBoxTheme(_pinShortcutTextBox, inputBg, text);
         ApplyTextBoxTheme(_saveDirectoryTextBox, inputBg, text);
@@ -427,6 +667,10 @@ public sealed class HotkeySettingsForm : Form
 
         _languageCombo.BackColor = inputBg;
         _languageCombo.ForeColor = text;
+        _ocrLanguageCombo.BackColor = inputBg;
+        _ocrLanguageCombo.ForeColor = text;
+        _languageCombo.Invalidate();
+        _ocrLanguageCombo.Invalidate();
 
         ApplyButtonTheme(_okButton, primary: true, dark);
         ApplyButtonTheme(_cancelButton, primary: false, dark);
@@ -434,6 +678,38 @@ public sealed class HotkeySettingsForm : Form
 
         _card.Invalidate();
         ApplyWindowBackdrop();
+    }
+
+    private void DrawComboItem(ComboBox combo, DrawItemEventArgs e)
+    {
+        if (e.Bounds.Width <= 0 || e.Bounds.Height <= 0)
+            return;
+
+        var selected = e.State.HasFlag(DrawItemState.Selected);
+        var backgroundColor = selected
+            ? (_currentDark ? Color.FromArgb(0, 90, 158) : Color.FromArgb(204, 228, 247))
+            : (_currentDark ? Color.FromArgb(46, 46, 46) : Color.White);
+        var textColor = selected
+            ? Color.White
+            : (_currentDark ? Color.FromArgb(245, 245, 245) : Color.FromArgb(28, 28, 28));
+
+        using var background = new SolidBrush(backgroundColor);
+        e.Graphics.FillRectangle(background, e.Bounds);
+
+        var text = e.Index >= 0 && e.Index < combo.Items.Count
+            ? combo.Items[e.Index]?.ToString() ?? string.Empty
+            : combo.SelectedItem?.ToString() ?? combo.Text;
+        var textBounds = new Rectangle(e.Bounds.X + 6, e.Bounds.Y, e.Bounds.Width - 12, e.Bounds.Height);
+        TextRenderer.DrawText(
+            e.Graphics,
+            text,
+            combo.Font,
+            textBounds,
+            textColor,
+            TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding);
+
+        if (e.State.HasFlag(DrawItemState.Focus))
+            e.DrawFocusRectangle();
     }
 
     private static void ApplyButtonTheme(Button button, bool primary, bool dark)

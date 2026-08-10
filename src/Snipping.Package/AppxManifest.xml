@@ -6,13 +6,13 @@
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
   IgnorableNamespaces="uap desktop rescap">
   <Identity
-    Name="Snipping.Capture"
+    Name="__PACKAGE_NAME__"
     Publisher="__PUBLISHER__"
     Version="__VERSION__" />
   <Properties>
-    <DisplayName>Snipping</DisplayName>
-    <PublisherDisplayName>Snipping</PublisherDisplayName>
-    <Description>Lightweight Windows screenshot tool</Description>
+    <DisplayName>__DISPLAY_NAME__</DisplayName>
+    <PublisherDisplayName>__PUBLISHER_DISPLAY_NAME__</PublisherDisplayName>
+    <Description>__DESCRIPTION__</Description>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
   <Dependencies>
@@ -21,6 +21,9 @@
       MinVersion="10.0.17763.0"
       MaxVersionTested="10.0.26100.0" />
   </Dependencies>
+  <Resources>
+    <Resource Language="en-US" />
+  </Resources>
   <Capabilities>
     <rescap:Capability Name="runFullTrust" />
   </Capabilities>
@@ -31,8 +34,8 @@
       EntryPoint="Windows.FullTrustApplication">
       <uap:VisualElements
         AppListEntry="default"
-        DisplayName="Snipping"
-        Description="Lightweight Windows screenshot tool"
+        DisplayName="__DISPLAY_NAME__"
+        Description="__DESCRIPTION__"
         BackgroundColor="#202020"
         Square44x44Logo="Assets\Square44x44Logo.png"
         Square150x150Logo="Assets\Square150x150Logo.png" />

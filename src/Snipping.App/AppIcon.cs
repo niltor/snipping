@@ -1,54 +1,45 @@
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 
 namespace Snipping.App;
 
 /// <summary>
-/// Creates the small application/tray mark in code so the app does not need
-/// a separate bitmap set. The shape is intentionally simple at tray scale.
+/// Creates the tray and settings-window icon from the selected Store artwork.
+/// Keeping one source prevents the app icon from drifting from the package icon.
 /// </summary>
 internal static class AppIcon
 {
     private const int Size = 32;
+    // The selected artwork is a square canvas with generous outer margins.
+    // Crop to the artwork area before producing the small tray/window icon.
+    private const double ArtworkCropRatio = 0.66;
+    private const double ArtworkCenterX = 0.546;
+    private const double ArtworkCenterY = 0.516;
+    private const string ResourceName = "Snipping.App.StoreIcon.png";
 
     public static Icon Create()
     {
-        using var bitmap = new Bitmap(Size, Size, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-        using (var g = Graphics.FromImage(bitmap))
+        var assembly = typeof(AppIcon).Assembly;
+        using var resource = assembly.GetManifestResourceStream(ResourceName)
+            ?? throw new InvalidOperationException($"Embedded app icon not found: {ResourceName}");
+        using var source = new Bitmap(resource);
+        using var bitmap = new Bitmap(Size, Size, PixelFormat.Format32bppArgb);
+
+        using (var graphics = Graphics.FromImage(bitmap))
         {
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            g.Clear(Color.Transparent);
-
-            using var card = new SolidBrush(Color.FromArgb(242, 242, 242));
-            using var cardPath = RoundedRect(new Rectangle(4, 4, 24, 24), 5);
-            g.FillPath(card, cardPath);
-
-            // Three compact orange marks suggest the capture/selection action.
-            using var accent = new SolidBrush(Color.FromArgb(232, 83, 30));
-            g.FillRectangle(accent, 8, 9, 4, 4);
-            g.FillRectangle(accent, 8, 15, 4, 4);
-            g.FillRectangle(accent, 8, 21, 4, 4);
-            g.FillRectangle(accent, 13, 9, 4, 4);
-
-            // Gray screen/document with a single blue focus ring.
-            using var panel = new SolidBrush(Color.FromArgb(160, 168, 172));
-            using var panelPath = RoundedRect(new Rectangle(13, 11, 11, 12), 2);
-            g.FillPath(panel, panelPath);
-
-            using var bluePen = new Pen(Color.FromArgb(0, 132, 211), 2.2f)
-            {
-                StartCap = LineCap.Round,
-                EndCap = LineCap.Round
-            };
-            g.DrawLine(bluePen, 22, 22, 25, 25);
-            g.DrawEllipse(bluePen, 24, 23, 6, 6);
+            graphics.SmoothingMode = SmoothingMode.HighQuality;
+            graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            var crop = GetArtworkCrop(source);
+            graphics.DrawImage(source, new Rectangle(0, 0, Size, Size), crop, GraphicsUnit.Pixel);
         }
 
         var handle = bitmap.GetHicon();
         try
         {
-            using var source = Icon.FromHandle(handle);
-            return (Icon)source.Clone();
+            using var sourceIcon = Icon.FromHandle(handle);
+            return (Icon)sourceIcon.Clone();
         }
         finally
         {
@@ -56,16 +47,18 @@ internal static class AppIcon
         }
     }
 
-    private static GraphicsPath RoundedRect(Rectangle r, int radius)
+    private static Rectangle GetArtworkCrop(Bitmap source)
     {
-        var path = new GraphicsPath();
-        var diameter = radius * 2;
-        path.AddArc(r.X, r.Y, diameter, diameter, 180, 90);
-        path.AddArc(r.Right - diameter, r.Y, diameter, diameter, 270, 90);
-        path.AddArc(r.Right - diameter, r.Bottom - diameter, diameter, diameter, 0, 90);
-        path.AddArc(r.X, r.Bottom - diameter, diameter, diameter, 90, 90);
-        path.CloseFigure();
-        return path;
+        var side = Math.Max(1, (int)Math.Round(Math.Min(source.Width, source.Height) * ArtworkCropRatio));
+        var centerX = (int)Math.Round(source.Width * ArtworkCenterX);
+        var centerY = (int)Math.Round(source.Height * ArtworkCenterY);
+        var left = Math.Clamp(centerX - side / 2, 0, source.Width - side);
+        var top = Math.Clamp(centerY - side / 2, 0, source.Height - side);
+        return new Rectangle(
+            left,
+            top,
+            side,
+            side);
     }
 
     [DllImport("user32.dll", SetLastError = true)]

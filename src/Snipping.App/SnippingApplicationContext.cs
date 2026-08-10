@@ -12,7 +12,7 @@ public sealed class SnippingApplicationContext : ApplicationContext
 
     private readonly SettingsManager _settingsManager = new();
     private readonly ExportManager _exportManager = new();
-    private readonly IOcrService _ocrService = new WindowsOcrService();
+    private IOcrService _ocrService;
     private readonly string _settingsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Snipping", "settings.ini");
 
     private readonly NotifyIcon _notifyIcon;
@@ -24,6 +24,7 @@ public sealed class SnippingApplicationContext : ApplicationContext
     public SnippingApplicationContext()
     {
         _settings = _settingsManager.Load(_settingsPath);
+        _ocrService = new WindowsOcrService(_settings);
         _applicationIcon = AppIcon.Create();
 
         _notifyIcon = new NotifyIcon
@@ -125,7 +126,24 @@ public sealed class SnippingApplicationContext : ApplicationContext
             _settings.SaveDirectory = string.IsNullOrWhiteSpace(form.SaveDirectory) ? _settings.SaveDirectory : form.SaveDirectory;
             _settings.Theme = form.Theme;
             _settings.Language = form.Language;
+            _settings.OcrPreferredLanguage = form.OcrPreferredLanguage;
+            try
+            {
+                StartupManager.Apply(form.StartWithWindows);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    T($"开机自启设置失败：{ex.Message}", $"Could not update Windows startup: {ex.Message}"),
+                    T("设置", "Settings"),
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
+
+            _settings.StartWithWindows = form.StartWithWindows;
             await _settingsManager.SaveAsync(_settingsPath, _settings);
+            _ocrService = new WindowsOcrService(_settings);
         }
         finally
         {

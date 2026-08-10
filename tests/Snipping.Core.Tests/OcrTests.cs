@@ -44,5 +44,9 @@ public sealed class OcrTests
         var failure = new OcrResult(Array.Empty<OcrTextLine>(), "language pack missing");
         Assert.False(failure.IsSuccess);
         Assert.Equal("language pack missing", failure.ErrorMessage);
+
+        var selected = new OcrResult(Array.Empty<OcrTextLine>(), null, "using zh-Hans + en-US");
+        Assert.True(selected.IsSuccess);
+        Assert.Equal("using zh-Hans + en-US", selected.InfoMessage);
     }
 }

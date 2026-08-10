@@ -13,7 +13,10 @@ public sealed record OcrTextLine(string Text, int X, int Y, int Width, int Heigh
     public bool IsValid => !string.IsNullOrWhiteSpace(Text) && Width > 0 && Height > 0;
 }
 
-public sealed record OcrResult(IReadOnlyList<OcrTextLine> Lines, string? ErrorMessage = null)
+public sealed record OcrResult(
+    IReadOnlyList<OcrTextLine> Lines,
+    string? ErrorMessage = null,
+    string? InfoMessage = null)
 {
     public bool IsSuccess => ErrorMessage is null;
 

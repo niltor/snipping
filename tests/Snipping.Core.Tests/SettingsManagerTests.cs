@@ -28,7 +28,9 @@ public sealed class SettingsManagerTests
             Hotkey = "Ctrl+Alt+A",
             JpegQuality = 80,
             PinOpacity = 75,
-            FileNamePrefix = "capture"
+            FileNamePrefix = "capture",
+            OcrPreferredLanguage = "ja-JP",
+            StartWithWindows = true
         };
 
         try
@@ -40,6 +42,8 @@ public sealed class SettingsManagerTests
             Assert.Equal(expected.JpegQuality, actual.JpegQuality);
             Assert.Equal(expected.PinOpacity, actual.PinOpacity);
             Assert.Equal(expected.FileNamePrefix, actual.FileNamePrefix);
+            Assert.Equal(expected.OcrPreferredLanguage, actual.OcrPreferredLanguage);
+            Assert.Equal(expected.StartWithWindows, actual.StartWithWindows);
         }
         finally
         {

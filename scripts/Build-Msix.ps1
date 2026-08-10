@@ -2,9 +2,15 @@
 param(
     [string]$Configuration = "Release",
     [string]$RuntimeIdentifier = "win-x64",
-    [string]$Version = "1.0.0.0",
+    [string]$Version = "1.0.4.0",
     [string]$Publisher = "CN=Snipping Development",
+    [string]$PackageName = "Snipping.Capture",
+    [string]$PublisherDisplayName = "Snipping",
+    [string]$DisplayName = "Snipping",
+    [string]$Description = "Lightweight Windows screenshot tool",
+    [string]$StoreIconPath = "src\Snipping.Package\StoreAssets\Snipping-StoreIcon-Layers.png",
     [string]$OutputDirectory = "",
+    [string]$PackageFileName = "",
     [switch]$Sign,
     [switch]$GenerateDevelopmentCertificate,
     [switch]$ForceNewDevelopmentCertificate,
@@ -20,7 +26,20 @@ $manifestTemplate = Join-Path $repoRoot "src\Snipping.Package\AppxManifest.xml"
 $artifactRoot = if ($OutputDirectory) { $OutputDirectory } else { Join-Path $repoRoot "artifacts\msix" }
 $publishDirectory = Join-Path $artifactRoot "publish"
 $packageDirectory = Join-Path $artifactRoot "package"
-$msixPath = Join-Path $artifactRoot "Snipping-$Version-$RuntimeIdentifier.msix"
+$msixFileName = if ($PackageFileName) { $PackageFileName } else { "Snipping-$Version-$RuntimeIdentifier.msix" }
+$msixPath = Join-Path $artifactRoot $msixFileName
+$resolvedStoreIconPath = ""
+if ($StoreIconPath) {
+    $resolvedStoreIconPath = if ([IO.Path]::IsPathRooted($StoreIconPath)) {
+        $StoreIconPath
+    }
+    else {
+        Join-Path $repoRoot $StoreIconPath
+    }
+    if (-not (Test-Path -LiteralPath $resolvedStoreIconPath)) {
+        throw "找不到商店图标源文件：$resolvedStoreIconPath"
+    }
+}
 
 $architecture = switch ($RuntimeIdentifier) {
     "win-arm64" { "arm64"; break }
@@ -65,49 +84,48 @@ New-Item -ItemType Directory -Force -Path $assetsDirectory | Out-Null
 
 Add-Type -AssemblyName System.Drawing
 
-function New-AppLogo {
-    param([string]$Path, [int]$Size)
+function New-ResizedPng {
+    param([string]$SourcePath, [string]$TargetPath, [int]$Size)
 
-    $bitmap = New-Object System.Drawing.Bitmap -ArgumentList @($Size, $Size, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
-    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    $source = New-Object System.Drawing.Bitmap($SourcePath)
+    $target = New-Object System.Drawing.Bitmap($Size, $Size, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+    $graphics = [System.Drawing.Graphics]::FromImage($target)
     try {
-        $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
         $graphics.Clear([System.Drawing.Color]::Transparent)
-        $scale = $Size / 32.0
-
-        $cardBrush = New-Object System.Drawing.SolidBrush -ArgumentList ([System.Drawing.Color]::FromArgb(242, 242, 242))
-        $graphics.FillRectangle($cardBrush, [int](4 * $scale), [int](4 * $scale), [int](24 * $scale), [int](24 * $scale))
-        $cardBrush.Dispose()
-
-        $accent = New-Object System.Drawing.SolidBrush -ArgumentList ([System.Drawing.Color]::FromArgb(232, 83, 30))
-        foreach ($point in @(@(8, 9), @(8, 15), @(8, 21), @(13, 9))) {
-            $graphics.FillRectangle($accent, [int]($point[0] * $scale), [int]($point[1] * $scale), [int](4 * $scale), [int](4 * $scale))
-        }
-        $accent.Dispose()
-
-        $panel = New-Object System.Drawing.SolidBrush -ArgumentList ([System.Drawing.Color]::FromArgb(160, 168, 172))
-        $graphics.FillRectangle($panel, [int](13 * $scale), [int](11 * $scale), [int](11 * $scale), [int](12 * $scale))
-        $panel.Dispose()
-
-        $blue = New-Object System.Drawing.Pen -ArgumentList ([System.Drawing.Color]::FromArgb(0, 132, 211)), ([float](2.2 * $scale))
-        $graphics.DrawLine($blue, [float](22 * $scale), [float](22 * $scale), [float](25 * $scale), [float](25 * $scale))
-        $graphics.DrawEllipse($blue, [int](24 * $scale), [int](23 * $scale), [int](6 * $scale), [int](6 * $scale))
-        $blue.Dispose()
-
-        $bitmap.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png)
+        $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+        $graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+        $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+        # The selected source artwork has a large outer margin and is slightly
+        # offset toward the lower-right. Crop around the artwork before
+        # resizing so small icons remain legible without clipping the blue mark.
+        $cropSide = [Math]::Max(1, [int][Math]::Round([Math]::Min($source.Width, $source.Height) * 0.66))
+        $cropCenterX = [int][Math]::Round($source.Width * 0.546)
+        $cropCenterY = [int][Math]::Round($source.Height * 0.516)
+        $cropX = [Math]::Max(0, [Math]::Min($source.Width - $cropSide, $cropCenterX - [int]($cropSide / 2)))
+        $cropY = [Math]::Max(0, [Math]::Min($source.Height - $cropSide, $cropCenterY - [int]($cropSide / 2)))
+        $sourceRect = [System.Drawing.Rectangle]::new($cropX, $cropY, $cropSide, $cropSide)
+        $targetRect = [System.Drawing.Rectangle]::new(0, 0, $Size, $Size)
+        $graphics.DrawImage($source, $targetRect, $sourceRect, [System.Drawing.GraphicsUnit]::Pixel)
+        $target.Save($TargetPath, [System.Drawing.Imaging.ImageFormat]::Png)
     }
     finally {
         $graphics.Dispose()
-        $bitmap.Dispose()
+        $target.Dispose()
+        $source.Dispose()
     }
 }
 
-New-AppLogo (Join-Path $assetsDirectory "StoreLogo.png") 50
-New-AppLogo (Join-Path $assetsDirectory "Square44x44Logo.png") 44
-New-AppLogo (Join-Path $assetsDirectory "Square150x150Logo.png") 150
+New-ResizedPng $resolvedStoreIconPath (Join-Path $assetsDirectory "StoreLogo.png") 50
+New-ResizedPng $resolvedStoreIconPath (Join-Path $assetsDirectory "Square44x44Logo.png") 44
+New-ResizedPng $resolvedStoreIconPath (Join-Path $assetsDirectory "Square150x150Logo.png") 150
 
 $manifest = Get-Content -Raw $manifestTemplate
-$manifest = $manifest.Replace("__PUBLISHER__", $Publisher).Replace("__VERSION__", $Version)
+$manifest = $manifest.Replace("__PACKAGE_NAME__", $PackageName).
+    Replace("__PUBLISHER__", $Publisher).
+    Replace("__PUBLISHER_DISPLAY_NAME__", $PublisherDisplayName).
+    Replace("__DISPLAY_NAME__", $DisplayName).
+    Replace("__DESCRIPTION__", $Description).
+    Replace("__VERSION__", $Version)
 Set-Content -LiteralPath (Join-Path $packageDirectory "AppxManifest.xml") -Value $manifest -Encoding UTF8
 
 if (Test-Path $msixPath) { Remove-Item -LiteralPath $msixPath -Force }

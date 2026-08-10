@@ -12,14 +12,16 @@ public sealed class OcrResultPanel : RoundedPanel
     private readonly Label _statusLabel;
     private readonly TextBox _resultTextBox;
     private readonly Button _copyButton;
+    private readonly string _language;
     private IReadOnlyList<OcrTextLine> _lines = Array.Empty<OcrTextLine>();
     private int[] _lineStarts = Array.Empty<int>();
     private bool _suppressSelectionEvent;
 
     public event EventHandler<int>? LineSelected;
 
-    public OcrResultPanel()
+    public OcrResultPanel(string? language = null)
     {
+        _language = language ?? "zh-CN";
         Size = new Size(360, 260);
         Padding = new Padding(8);
         BackColor = Color.FromArgb(32, 32, 32);
@@ -32,7 +34,7 @@ public sealed class OcrResultPanel : RoundedPanel
         {
             Dock = DockStyle.Top,
             Height = 24,
-            Text = "OCR 识别结果",
+            Text = UiText.OcrResultTitle(_language),
             ForeColor = Color.White,
             BackColor = Color.Transparent,
             Font = new Font("Segoe UI", 9f, FontStyle.Bold),
@@ -54,7 +56,7 @@ public sealed class OcrResultPanel : RoundedPanel
         {
             Dock = DockStyle.Bottom,
             Height = 30,
-            Text = "复制文字",
+            Text = UiText.CopyText(_language),
             FlatStyle = FlatStyle.Flat,
             BackColor = Color.FromArgb(0, 120, 212),
             ForeColor = Color.White,
@@ -76,7 +78,7 @@ public sealed class OcrResultPanel : RoundedPanel
             WordWrap = true,
             ShortcutsEnabled = true,
             TabStop = true,
-            AccessibleName = "OCR 识别结果"
+            AccessibleName = UiText.OcrResultTitle(_language)
         };
         _resultTextBox.MouseUp += (_, _) => NotifyTextSelection();
         _resultTextBox.KeyUp += (_, _) => NotifyTextSelection();
@@ -97,10 +99,13 @@ public sealed class OcrResultPanel : RoundedPanel
         _resultTextBox.Clear();
         _copyButton.Enabled = false;
         _statusLabel.ForeColor = Color.FromArgb(190, 190, 190);
-        _statusLabel.Text = "正在识别…";
+        _statusLabel.Text = UiText.Recognizing(_language);
     }
 
-    public void SetResult(IReadOnlyList<OcrTextLine> lines, string? errorMessage = null)
+    public void SetResult(
+        IReadOnlyList<OcrTextLine> lines,
+        string? errorMessage = null,
+        string? infoMessage = null)
     {
         _lines = lines;
         _lineStarts = new int[lines.Count];
@@ -132,12 +137,18 @@ public sealed class OcrResultPanel : RoundedPanel
         else if (lines.Count == 0)
         {
             _statusLabel.ForeColor = Color.FromArgb(190, 190, 190);
-            _statusLabel.Text = "未识别到文字";
+            _statusLabel.Text = UiText.NoTextRecognized(_language);
+        }
+        else if (!string.IsNullOrWhiteSpace(infoMessage))
+        {
+            _statusLabel.ForeColor = Color.FromArgb(170, 210, 235);
+            _statusLabel.Text = infoMessage;
+            SelectLine(0);
         }
         else
         {
             _statusLabel.ForeColor = Color.FromArgb(150, 210, 170);
-            _statusLabel.Text = $"识别到 {lines.Count} 行文字";
+            _statusLabel.Text = UiText.RecognizedLines(_language, lines.Count);
             SelectLine(0);
         }
 
@@ -184,12 +195,12 @@ public sealed class OcrResultPanel : RoundedPanel
         {
             Clipboard.SetText(text);
             _statusLabel.ForeColor = Color.FromArgb(150, 210, 170);
-            _statusLabel.Text = "文字已复制";
+            _statusLabel.Text = UiText.TextCopied(_language);
         }
         catch (Exception ex)
         {
             _statusLabel.ForeColor = Color.FromArgb(255, 150, 150);
-            _statusLabel.Text = $"复制失败：{ex.Message}";
+            _statusLabel.Text = UiText.CopyFailed(_language, ex.Message);
         }
     }
 
