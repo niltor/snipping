@@ -28,13 +28,24 @@ public sealed class RectangleAnnotation : AnnotationItem
     public required Point End { get; init; }
     public Color Color { get; init; } = Color.Red;
     public float Thickness { get; init; } = 3;
+    public int Opacity { get; init; } = 100;
+    public ShapeRenderMode RenderMode { get; init; } = ShapeRenderMode.Outline;
 
     public override void Draw(Graphics g, Bitmap? sourceBitmap)
     {
         var rect = AnnotationHelper.Normalize(Start, End);
         if (rect.Width < 1 || rect.Height < 1) return;
-        using var pen = new Pen(Color, Thickness);
-        g.DrawRectangle(pen, rect);
+        var color = AnnotationHelper.WithOpacity(Color, Opacity);
+        if (RenderMode == ShapeRenderMode.Fill)
+        {
+            using var brush = new SolidBrush(color);
+            g.FillRectangle(brush, rect);
+        }
+        else
+        {
+            using var pen = new Pen(color, Thickness);
+            g.DrawRectangle(pen, rect);
+        }
     }
 }
 
@@ -44,13 +55,24 @@ public sealed class EllipseAnnotation : AnnotationItem
     public required Point End { get; init; }
     public Color Color { get; init; } = Color.Red;
     public float Thickness { get; init; } = 3;
+    public int Opacity { get; init; } = 100;
+    public ShapeRenderMode RenderMode { get; init; } = ShapeRenderMode.Outline;
 
     public override void Draw(Graphics g, Bitmap? sourceBitmap)
     {
         var rect = AnnotationHelper.Normalize(Start, End);
         if (rect.Width < 1 || rect.Height < 1) return;
-        using var pen = new Pen(Color, Thickness);
-        g.DrawEllipse(pen, rect);
+        var color = AnnotationHelper.WithOpacity(Color, Opacity);
+        if (RenderMode == ShapeRenderMode.Fill)
+        {
+            using var brush = new SolidBrush(color);
+            g.FillEllipse(brush, rect);
+        }
+        else
+        {
+            using var pen = new Pen(color, Thickness);
+            g.DrawEllipse(pen, rect);
+        }
     }
 }
 
@@ -60,6 +82,7 @@ public sealed class ArrowAnnotation : AnnotationItem
     public required Point End { get; init; }
     public Color Color { get; init; } = Color.Red;
     public float Thickness { get; init; } = 3;
+    public ArrowHeadMode ArrowHead { get; init; } = ArrowHeadMode.Single;
 
     public override void Draw(Graphics g, Bitmap? sourceBitmap)
     {
@@ -68,6 +91,8 @@ public sealed class ArrowAnnotation : AnnotationItem
         if (dx * dx + dy * dy < 9) return;
         using var pen = new Pen(Color, Thickness);
         pen.CustomEndCap = new AdjustableArrowCap(Thickness + 2, Thickness + 2);
+        if (ArrowHead == ArrowHeadMode.Double)
+            pen.CustomStartCap = new AdjustableArrowCap(Thickness + 2, Thickness + 2);
         g.DrawLine(pen, Start, End);
     }
 }
@@ -78,11 +103,15 @@ public sealed class LineAnnotation : AnnotationItem
     public required Point End { get; init; }
     public Color Color { get; init; } = Color.Red;
     public float Thickness { get; init; } = 3;
+    public LineStrokeStyle StrokeStyle { get; init; } = LineStrokeStyle.Solid;
 
     public override void Draw(Graphics g, Bitmap? sourceBitmap)
     {
         if (Start == End) return;
         using var pen = new Pen(Color, Thickness);
+        pen.DashStyle = StrokeStyle == LineStrokeStyle.Dashed
+            ? DashStyle.Dash
+            : DashStyle.Solid;
         g.DrawLine(pen, Start, End);
     }
 }
@@ -93,11 +122,13 @@ public sealed class TextAnnotation : AnnotationItem
     public required string Text { get; init; }
     public Color Color { get; init; } = Color.Red;
     public float FontSize { get; init; } = 18;
+    public bool Bold { get; init; }
+    public bool Italic { get; init; }
 
     public override void Draw(Graphics g, Bitmap? sourceBitmap)
     {
         if (string.IsNullOrEmpty(Text)) return;
-        using var font = new Font("Microsoft YaHei UI", FontSize, FontStyle.Regular, GraphicsUnit.Pixel);
+        using var font = new Font("Microsoft YaHei UI", FontSize, AnnotationHelper.GetFontStyle(Bold, Italic), GraphicsUnit.Pixel);
         using var brush = new SolidBrush(Color);
         g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
         g.DrawString(Text, font, brush, Position);
@@ -105,7 +136,7 @@ public sealed class TextAnnotation : AnnotationItem
 
     public Rectangle GetBounds()
     {
-        using var font = new Font("Microsoft YaHei UI", FontSize, FontStyle.Regular, GraphicsUnit.Pixel);
+        using var font = new Font("Microsoft YaHei UI", FontSize, AnnotationHelper.GetFontStyle(Bold, Italic), GraphicsUnit.Pixel);
         var size = TextRenderer.MeasureText(Text, font);
         return new Rectangle(Position.X, Position.Y, size.Width, size.Height);
     }
@@ -138,8 +169,9 @@ public sealed class MosaicAnnotation : AnnotationItem
         var safeRect = Rectangle.Intersect(rect, new Rectangle(0, 0, sourceBitmap.Width, sourceBitmap.Height));
         if (safeRect.Width < 2 || safeRect.Height < 2) return;
 
-        var w = Math.Max(1, safeRect.Width / BlockSize);
-        var h = Math.Max(1, safeRect.Height / BlockSize);
+        var blockSize = Math.Max(1, BlockSize);
+        var w = Math.Max(1, safeRect.Width / blockSize);
+        var h = Math.Max(1, safeRect.Height / blockSize);
         using var small = new Bitmap(w, h);
         using (var sg = Graphics.FromImage(small))
         {
@@ -186,7 +218,9 @@ public sealed class MosaicBrushAnnotation : AnnotationItem
     {
         if (sourceBitmap is null || Points.Count < 2) return;
 
-        using var strokePen = new Pen(Color.Black, BrushWidth)
+        var brushWidth = Math.Clamp(BrushWidth, 5, 50);
+        var blockSize = Math.Max(1, BlockSize);
+        using var strokePen = new Pen(Color.Black, brushWidth)
         {
             LineJoin = LineJoin.Round,
             StartCap = LineCap.Round,
@@ -202,8 +236,8 @@ public sealed class MosaicBrushAnnotation : AnnotationItem
         var safeRect = Rectangle.Intersect(bounds, new Rectangle(0, 0, sourceBitmap.Width, sourceBitmap.Height));
         if (safeRect.Width < 2 || safeRect.Height < 2) return;
 
-        var w = Math.Max(1, safeRect.Width / BlockSize);
-        var h = Math.Max(1, safeRect.Height / BlockSize);
+        var w = Math.Max(1, safeRect.Width / blockSize);
+        var h = Math.Max(1, safeRect.Height / blockSize);
         using var small = new Bitmap(w, h);
         using (var sg = Graphics.FromImage(small))
         {
@@ -227,5 +261,20 @@ internal static class AnnotationHelper
         return new Rectangle(
             Math.Min(a.X, b.X), Math.Min(a.Y, b.Y),
             Math.Abs(a.X - b.X), Math.Abs(a.Y - b.Y));
+    }
+
+    public static Color WithOpacity(Color color, int opacity)
+    {
+        var normalizedOpacity = Math.Clamp(opacity, 10, 100);
+        var alpha = color.A * normalizedOpacity / 100;
+        return Color.FromArgb(alpha, color.R, color.G, color.B);
+    }
+
+    public static FontStyle GetFontStyle(bool bold, bool italic)
+    {
+        var style = FontStyle.Regular;
+        if (bold) style |= FontStyle.Bold;
+        if (italic) style |= FontStyle.Italic;
+        return style;
     }
 }

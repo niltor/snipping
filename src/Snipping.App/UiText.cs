@@ -24,6 +24,20 @@ internal static class UiText
             _ => string.Empty
         };
 
+    public static string AnnotationToolName(string? language, AnnotationTool tool) =>
+        tool switch
+        {
+            AnnotationTool.Rectangle => T(language, "矩形", "Rectangle"),
+            AnnotationTool.Ellipse => T(language, "椭圆", "Ellipse"),
+            AnnotationTool.Arrow => T(language, "箭头", "Arrow"),
+            AnnotationTool.Line => T(language, "直线", "Line"),
+            AnnotationTool.Text => T(language, "文字", "Text"),
+            AnnotationTool.Highlight => T(language, "高亮", "Highlight"),
+            AnnotationTool.Mosaic => T(language, "马赛克", "Mosaic"),
+            AnnotationTool.FreeDraw => T(language, "画笔", "Free draw"),
+            _ => string.Empty
+        };
+
     public static string ColorToolTip(string? language, Color color, int shortcut)
     {
         var name = color.ToArgb() switch

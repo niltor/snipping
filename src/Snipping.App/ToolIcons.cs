@@ -15,6 +15,17 @@ internal static class ToolIcons
         g.DrawRectangle(pen, box);
     }
 
+    public static void ShapeOutline(Graphics g, Rectangle r, Color c) => Rectangle(g, r, c);
+
+    public static void ShapeFill(Graphics g, Rectangle r, Color c)
+    {
+        var box = Deflate(r, 5);
+        using var brush = new SolidBrush(Color.FromArgb(150, c));
+        using var pen = new Pen(c, 1.4f);
+        g.FillRectangle(brush, box);
+        g.DrawRectangle(pen, box);
+    }
+
     public static void Ellipse(Graphics g, Rectangle r, Color c)
     {
         var box = Deflate(r, 5);
@@ -32,11 +43,80 @@ internal static class ToolIcons
         g.DrawLine(pen, start, end);
     }
 
+    public static void ArrowSingle(Graphics g, Rectangle r, Color c) => Arrow(g, r, c);
+
+    public static void ArrowDouble(Graphics g, Rectangle r, Color c)
+    {
+        var box = Deflate(r, 5);
+        using var pen = new Pen(c, 1.6f)
+        {
+            CustomStartCap = new AdjustableArrowCap(4, 4),
+            CustomEndCap = new AdjustableArrowCap(4, 4)
+        };
+        g.DrawLine(pen, box.Left, box.Bottom, box.Right, box.Top);
+    }
+
     public static void Line(Graphics g, Rectangle r, Color c)
     {
         var box = Deflate(r, 5);
         using var pen = new Pen(c, 1.6f);
         g.DrawLine(pen, box.Left, box.Bottom, box.Right, box.Top);
+    }
+
+    public static void LineSolid(Graphics g, Rectangle r, Color c) => Line(g, r, c);
+
+    public static void LineDashed(Graphics g, Rectangle r, Color c)
+    {
+        var box = Deflate(r, 5);
+        using var pen = new Pen(c, 1.6f) { DashStyle = DashStyle.Dash };
+        g.DrawLine(pen, box.Left, box.Bottom, box.Right, box.Top);
+    }
+
+    public static void Opacity(Graphics g, Rectangle r, Color c)
+    {
+        var box = Deflate(r, 6);
+        using var pen = new Pen(c, 1.5f);
+        using var brush = new SolidBrush(Color.FromArgb(110, c));
+        g.FillPie(brush, box, 270, 180);
+        g.DrawEllipse(pen, box);
+        g.DrawLine(pen, box.Left + box.Width / 2, box.Top, box.Left + box.Width / 2, box.Bottom);
+    }
+
+    public static void FontSize(Graphics g, Rectangle r, Color c)
+    {
+        var box = Deflate(r, 4);
+        using var brush = new SolidBrush(c);
+        using var large = new Font("Segoe UI", Math.Max(8, box.Height * 0.58f), FontStyle.Regular, GraphicsUnit.Pixel);
+        using var small = new Font("Segoe UI", Math.Max(6, box.Height * 0.34f), FontStyle.Regular, GraphicsUnit.Pixel);
+        g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
+        g.DrawString("A", large, brush, box.Left - 1, box.Top + 1);
+        g.DrawString("A", small, brush, box.Right - 7, box.Bottom - 8);
+    }
+
+    public static void BrushSize(Graphics g, Rectangle r, Color c)
+    {
+        var box = Deflate(r, 5);
+        using var brush = new SolidBrush(c);
+        g.FillEllipse(brush, box.Left, box.Bottom - 5, 5, 5);
+        g.FillEllipse(brush, box.Left + box.Width / 2 - 4, box.Top + box.Height / 2 - 4, 8, 8);
+        g.FillEllipse(brush, box.Right - 10, box.Top, 10, 10);
+    }
+
+    public static void Bold(Graphics g, Rectangle r, Color c) => DrawLetter(g, r, c, "B", FontStyle.Bold);
+
+    public static void Italic(Graphics g, Rectangle r, Color c) => DrawLetter(g, r, c, "I", FontStyle.Italic);
+
+    private static void DrawLetter(Graphics g, Rectangle r, Color c, string letter, FontStyle style)
+    {
+        using var font = new Font("Segoe UI", Math.Max(10, r.Height * 0.68f), style, GraphicsUnit.Pixel);
+        using var brush = new SolidBrush(c);
+        g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
+        using var format = new StringFormat
+        {
+            Alignment = StringAlignment.Center,
+            LineAlignment = StringAlignment.Center
+        };
+        g.DrawString(letter, font, brush, r, format);
     }
 
     public static void Text(Graphics g, Rectangle r, Color c)

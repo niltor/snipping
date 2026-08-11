@@ -582,7 +582,7 @@ public sealed class HotkeySettingsForm : Form
     }
 
     private static string GetApplicationVersion() =>
-        typeof(HotkeySettingsForm).Assembly.GetName().Version?.ToString(3) ?? "0.0.0";
+        ApplicationVersionProvider.GetDisplayVersion();
 
     private void OnUserPreferenceChanged(object? sender, UserPreferenceChangedEventArgs e)
     {

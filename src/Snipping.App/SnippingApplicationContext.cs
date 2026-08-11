@@ -19,6 +19,7 @@ public sealed class SnippingApplicationContext : ApplicationContext
     private readonly Icon _applicationIcon;
     private readonly HotKeyWindow _hotKeyWindow;
     private SnippingSettings _settings;
+    private readonly FeatureEntitlements _featureEntitlements = new();
     private bool _hotkeyRegistered;
 
     public SnippingApplicationContext()
@@ -153,7 +154,12 @@ public sealed class SnippingApplicationContext : ApplicationContext
 
     internal void StartCapture()
     {
-        var overlay = new DesktopSnippingOverlayForm(_settings, _exportManager, _ocrService);
+        var overlay = new DesktopSnippingOverlayForm(
+            _settings,
+            _exportManager,
+            _ocrService,
+            _featureEntitlements);
+        overlay.PrepareScreenCapture();
         overlay.ShowDialog();
 
         if (overlay.PinResult is not null)

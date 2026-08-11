@@ -15,9 +15,10 @@ static class Program
         if (!createdNew)
             return;
 
-        // To customize application configuration such as set high DPI settings or default font,
-        // see https://aka.ms/applicationconfiguration.
-        ApplicationConfiguration.Initialize();
+        // Keep screen coordinates consistent across mixed-DPI monitors.
+        Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
         Application.Run(new SnippingApplicationContext());
     }    
 }

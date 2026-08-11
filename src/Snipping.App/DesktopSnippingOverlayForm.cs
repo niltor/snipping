@@ -9,6 +9,15 @@ namespace Snipping.App;
 
 public sealed record PinRequestInfo(Bitmap Bitmap, Point ScreenLocation);
 
+internal enum ToolbarPlacement
+{
+    BelowSelection,
+    AboveSelection,
+    InsideSelection
+}
+
+internal readonly record struct ToolbarLayout(Point Location, ToolbarPlacement Placement);
+
 public sealed class DesktopSnippingOverlayForm : Form
 {
     private const int MinSelection = 2;
@@ -22,6 +31,7 @@ public sealed class DesktopSnippingOverlayForm : Form
     private readonly SnippingSettings _settings;
     private readonly ExportManager _exportManager;
     private readonly IOcrService _ocrService;
+    private readonly FeatureEntitlements _features;
 
     // Screen capture (never modified — annotations are rendered as overlays)
     private Bitmap? _screenBitmap;
@@ -32,11 +42,13 @@ public sealed class DesktopSnippingOverlayForm : Form
     private Rectangle _selection;
     private readonly SmartSelectionDetector _smartSelectionDetector = new();
     private Rectangle _smartCandidate;
+    private bool _smartCandidateIsFallback;
+    private bool _smartCandidateNeedsRefinement;
+    private SmartSelectionSource _smartCandidateSource = SmartSelectionSource.WindowFallback;
+    private int _smartCandidateConfidence;
     private Rectangle _smartPressedCandidate;
     private Point _smartPressPoint;
-    private CancellationTokenSource? _smartDetectionCancellation;
-    private int _smartDetectionVersion;
-    private Point _lastSmartScreenPoint;
+    private SmartSelectionWorker? _smartSelectionWorker;
 
     // Selection resize state
     private ResizeHandle _activeHandle = ResizeHandle.None;
@@ -50,12 +62,23 @@ public sealed class DesktopSnippingOverlayForm : Form
     private Point? _drawStart;
     private Point _drawEnd;
     private List<Point>? _freePoints;
+    private readonly Dictionary<AnnotationTool, AnnotationToolOptions> _toolOptions = new()
+    {
+        [AnnotationTool.Rectangle] = new(),
+        [AnnotationTool.Ellipse] = new(),
+        [AnnotationTool.Arrow] = new(),
+        [AnnotationTool.Line] = new(),
+        [AnnotationTool.Text] = new(),
+        [AnnotationTool.Mosaic] = new()
+    };
 
     // Inline text input
     private TextBox? _textBox;
     private Panel? _textPanel;
     private Point _textInputPosition;
     private float _textFontSize = 18f;
+    private bool _textInputBold;
+    private bool _textInputItalic;
     private int _editingAnnotationIndex = -1;
     private bool _textInputManualSize;
     private bool _textInputDragging;
@@ -69,6 +92,7 @@ public sealed class DesktopSnippingOverlayForm : Form
 
     // Toolbar
     private readonly RoundedPanel _toolbar;
+    private readonly AnnotationOptionsPanel _optionsPanel;
     private readonly List<RoundedButton> _toolBtns = [];
     private readonly List<RoundedButton> _colorBtns = [];
     private RoundedButton? _ocrButton;
@@ -90,10 +114,20 @@ public sealed class DesktopSnippingOverlayForm : Form
     private readonly Keys _pinKey;
 
     public DesktopSnippingOverlayForm(SnippingSettings settings, ExportManager exportManager, IOcrService ocrService)
+        : this(settings, exportManager, ocrService, new FeatureEntitlements())
+    {
+    }
+
+    internal DesktopSnippingOverlayForm(
+        SnippingSettings settings,
+        ExportManager exportManager,
+        IOcrService ocrService,
+        FeatureEntitlements features)
     {
         _settings = settings;
         _exportManager = exportManager;
         _ocrService = ocrService;
+        _features = features;
 
         FormBorderStyle = FormBorderStyle.None;
         StartPosition = FormStartPosition.Manual;
@@ -116,10 +150,23 @@ public sealed class DesktopSnippingOverlayForm : Form
             // Keep the operation bar visually stable over any captured content.
             TintColor = Color.FromArgb(255, 30, 30, 30)
         };
+        _optionsPanel = new AnnotationOptionsPanel(_settings.Language)
+        {
+            Visible = false
+        };
+        _optionsPanel.OptionsChanged += (_, _) =>
+        {
+            ApplyTextOptionsToInput();
+            Invalidate();
+        };
         BuildToolbar();
         Controls.Add(_toolbar);
+        Controls.Add(_optionsPanel);
 
         ParseShortcut(_settings.PinShortcut, out _pinCtrl, out _pinShift, out _pinAlt, out _pinKey);
+        _smartSelectionWorker = new SmartSelectionWorker(
+            _smartSelectionDetector,
+            ApplySmartCandidateFromWorker);
     }
 
     private static void ParseShortcut(string shortcut, out bool ctrl, out bool shift, out bool alt, out Keys key)
@@ -304,6 +351,7 @@ public sealed class DesktopSnippingOverlayForm : Form
         ClearOcrResults();
         _tool = tool;
         UpdateToolHighlight();
+        UpdateOptionsPanel();
         UpdateCursor();
     }
 
@@ -361,12 +409,23 @@ public sealed class DesktopSnippingOverlayForm : Form
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
+        if (_screenBitmap is null)
+            PrepareScreenCapture();
+        Invalidate();
+    }
+
+    internal void PrepareScreenCapture()
+    {
         _screenBitmap?.Dispose();
         var vs = SystemInformation.VirtualScreen;
         _screenBitmap = new Bitmap(vs.Width, vs.Height, PixelFormat.Format32bppArgb);
         using (var g = Graphics.FromImage(_screenBitmap))
             g.CopyFromScreen(vs.Location, Point.Empty, vs.Size);
-        Invalidate();
+        _smartSelectionDetector.SetCaptureSurface(_screenBitmap, vs.Location);
+        // Build the native window/control catalog before this form is shown.
+        // The overlay is therefore absent from the catalog and mouse movement
+        // can use local rectangle hit-testing instead of EnumWindows/UIA calls.
+        _smartSelectionDetector.RefreshNativeSnapshot();
     }
 
     protected override void Dispose(bool disposing)
@@ -374,11 +433,12 @@ public sealed class DesktopSnippingOverlayForm : Form
         if (disposing)
         {
             ClearOcrResults();
+            _smartSelectionDetector.SetCaptureSurface(null, Point.Empty);
             _screenBitmap?.Dispose();
             _textPanel?.Dispose();
             _textBox?.Dispose();
-            _smartDetectionCancellation?.Cancel();
-            _smartDetectionCancellation?.Dispose();
+            _smartSelectionWorker?.Dispose();
+            _smartSelectionWorker = null;
             _tip.Dispose();
         }
 
@@ -394,14 +454,20 @@ public sealed class DesktopSnippingOverlayForm : Form
         if (_screenBitmap is null) return;
 
         var g = e.Graphics;
+        var paintBounds = Rectangle.Intersect(e.ClipRectangle, ClientRectangle);
+        if (paintBounds.Width < 1 || paintBounds.Height < 1)
+            return;
+
         g.SmoothingMode = SmoothingMode.AntiAlias;
 
-        // 1. Full screen capture
-        g.DrawImageUnscaled(_screenBitmap, 0, 0);
+        // 1. Paint only the invalid region. This matters on 4K and virtual
+        // multi-monitor desktops because candidate updates invalidate a tiny
+        // union rather than the whole overlay.
+        g.DrawImage(_screenBitmap, paintBounds, paintBounds, GraphicsUnit.Pixel);
 
         // 2. Dark overlay
         using (var brush = new SolidBrush(Color.FromArgb(120, 0, 0, 0)))
-            g.FillRectangle(brush, ClientRectangle);
+            g.FillRectangle(brush, paintBounds);
 
         if (_selection.Width < MinSelection || _selection.Height < MinSelection)
         {
@@ -411,8 +477,10 @@ public sealed class DesktopSnippingOverlayForm : Form
 
         // 3. Clear selection area — reveal the original capture
         var saved = g.Save();
-        g.SetClip(_selection);
-        g.DrawImage(_screenBitmap, _selection, _selection, GraphicsUnit.Pixel);
+        g.SetClip(_selection, CombineMode.Intersect);
+        var selectionPaint = Rectangle.Intersect(_selection, paintBounds);
+        if (selectionPaint.Width > 0 && selectionPaint.Height > 0)
+            g.DrawImage(_screenBitmap, selectionPaint, selectionPaint, GraphicsUnit.Pixel);
 
         // 4. Committed annotations
         foreach (var ann in _annotations)
@@ -476,7 +544,7 @@ public sealed class DesktopSnippingOverlayForm : Form
             return;
 
         var saved = g.Save();
-        g.SetClip(_smartCandidate);
+        g.SetClip(_smartCandidate, CombineMode.Intersect);
         g.DrawImage(_screenBitmap!, _smartCandidate, _smartCandidate, GraphicsUnit.Pixel);
         g.Restore(saved);
 
@@ -495,47 +563,48 @@ public sealed class DesktopSnippingOverlayForm : Form
         {
             case AnnotationTool.Rectangle:
             {
-                var r = AnnotationHelper.Normalize(s, end);
-                if (r.Width > 0 && r.Height > 0)
+                new RectangleAnnotation
                 {
-                    using var pen = new Pen(_color, 3);
-                    g.DrawRectangle(pen, r);
-                }
-
+                    Start = s,
+                    End = end,
+                    Color = _color,
+                    Opacity = GetToolOptions(AnnotationTool.Rectangle).ShapeOpacity,
+                    RenderMode = GetToolOptions(AnnotationTool.Rectangle).ShapeMode
+                }.Draw(g, _screenBitmap);
                 break;
             }
             case AnnotationTool.Ellipse:
             {
-                var r = AnnotationHelper.Normalize(s, end);
-                if (r.Width > 0 && r.Height > 0)
+                new EllipseAnnotation
                 {
-                    using var pen = new Pen(_color, 3);
-                    g.DrawEllipse(pen, r);
-                }
-
+                    Start = s,
+                    End = end,
+                    Color = _color,
+                    Opacity = GetToolOptions(AnnotationTool.Ellipse).ShapeOpacity,
+                    RenderMode = GetToolOptions(AnnotationTool.Ellipse).ShapeMode
+                }.Draw(g, _screenBitmap);
                 break;
             }
             case AnnotationTool.Arrow:
             {
-                var dx = end.X - s.X;
-                var dy = end.Y - s.Y;
-                if (dx * dx + dy * dy >= 9)
+                new ArrowAnnotation
                 {
-                    using var pen = new Pen(_color, 3);
-                    pen.CustomEndCap = new AdjustableArrowCap(5, 5);
-                    g.DrawLine(pen, s, end);
-                }
-
+                    Start = s,
+                    End = end,
+                    Color = _color,
+                    ArrowHead = GetToolOptions(AnnotationTool.Arrow).ArrowHead
+                }.Draw(g, _screenBitmap);
                 break;
             }
             case AnnotationTool.Line:
             {
-                if (s != end)
+                new LineAnnotation
                 {
-                    using var pen = new Pen(_color, 3);
-                    g.DrawLine(pen, s, end);
-                }
-
+                    Start = s,
+                    End = end,
+                    Color = _color,
+                    StrokeStyle = GetToolOptions(AnnotationTool.Line).LineStyle
+                }.Draw(g, _screenBitmap);
                 break;
             }
             case AnnotationTool.Highlight:
@@ -552,7 +621,13 @@ public sealed class DesktopSnippingOverlayForm : Form
             case AnnotationTool.Mosaic:
             {
                 if (_screenBitmap is not null && _freePoints is { Count: >= 2 })
-                    new MosaicBrushAnnotation { Points = new List<Point>(_freePoints) }.Draw(g, _screenBitmap);
+                {
+                    new MosaicBrushAnnotation
+                    {
+                        Points = new List<Point>(_freePoints),
+                        BrushWidth = GetToolOptions(AnnotationTool.Mosaic).MosaicBrushWidth
+                    }.Draw(g, _screenBitmap);
+                }
                 break;
             }
             case AnnotationTool.FreeDraw:
@@ -597,16 +672,21 @@ public sealed class DesktopSnippingOverlayForm : Form
                 {
                     _smartPressedCandidate = _smartCandidate;
                     _smartPressPoint = pt;
-                    _smartDetectionCancellation?.Cancel();
+                    _smartSelectionWorker?.CancelPending();
                     return;
                 }
 
                 _smartPressedCandidate = Rectangle.Empty;
                 _smartCandidate = Rectangle.Empty;
-                _smartDetectionCancellation?.Cancel();
+                _smartCandidateIsFallback = false;
+                _smartCandidateNeedsRefinement = false;
+                _smartCandidateSource = SmartSelectionSource.WindowFallback;
+                _smartCandidateConfidence = 0;
+                _smartSelectionWorker?.CancelPending();
                 _selStart = pt;
                 _selection = Rectangle.Empty;
                 _toolbar.Visible = false;
+                _optionsPanel.Visible = false;
                 break;
 
             case Phase.Ready:
@@ -644,6 +724,7 @@ public sealed class DesktopSnippingOverlayForm : Form
                     _selStart = pt;
                     _selection = Rectangle.Empty;
                     _toolbar.Visible = false;
+                    _optionsPanel.Visible = false;
                     Cursor = Cursors.Cross;
                     Invalidate();
                     return;
@@ -670,7 +751,7 @@ public sealed class DesktopSnippingOverlayForm : Form
                         if (_annotations[i] is TextAnnotation ta && ta.GetBounds().Contains(pt))
                         {
                             _editingAnnotationIndex = i;
-                            ShowTextInput(ta.Position, ta.Text, ta.FontSize, ta.Color);
+                            ShowTextInput(ta.Position, ta.Text, ta.FontSize, ta.Color, ta.Bold, ta.Italic);
                             return;
                         }
                     }
@@ -706,6 +787,10 @@ public sealed class DesktopSnippingOverlayForm : Form
                     _selStart = _smartPressPoint;
                     _smartPressedCandidate = Rectangle.Empty;
                     _smartCandidate = Rectangle.Empty;
+                    _smartCandidateIsFallback = false;
+                    _smartCandidateNeedsRefinement = false;
+                    _smartCandidateSource = SmartSelectionSource.WindowFallback;
+                    _smartCandidateConfidence = 0;
                     _selection = AnnotationHelper.Normalize(_selStart.Value, pt);
                     Cursor = Cursors.Cross;
                     Invalidate();
@@ -784,6 +869,7 @@ public sealed class DesktopSnippingOverlayForm : Form
             {
                 PositionToolbar();
                 _toolbar.Visible = true;
+                UpdateOptionsPanel();
             }
             Invalidate();
             return;
@@ -794,11 +880,16 @@ public sealed class DesktopSnippingOverlayForm : Form
             var candidate = _smartPressedCandidate;
             _smartPressedCandidate = Rectangle.Empty;
             _smartCandidate = Rectangle.Empty;
+            _smartCandidateIsFallback = false;
+            _smartCandidateNeedsRefinement = false;
+            _smartCandidateSource = SmartSelectionSource.WindowFallback;
+            _smartCandidateConfidence = 0;
             _selection = candidate;
             _phase = Phase.Ready;
             UpdateCursor();
             PositionToolbar();
             _toolbar.Visible = true;
+            UpdateOptionsPanel();
             Invalidate();
             return;
         }
@@ -814,6 +905,7 @@ public sealed class DesktopSnippingOverlayForm : Form
                 UpdateCursor();
                 PositionToolbar();
                 _toolbar.Visible = true;
+                UpdateOptionsPanel();
             }
             else
             {
@@ -843,8 +935,16 @@ public sealed class DesktopSnippingOverlayForm : Form
         if (_textBox is not null && ModifierKeys.HasFlag(Keys.Control))
         {
             var delta = e.Delta > 0 ? 2f : -2f;
-            _textFontSize = Math.Clamp(_textFontSize + delta, 8f, 100f);
-            _textBox.Font = new Font("Microsoft YaHei UI", _textFontSize, FontStyle.Regular, GraphicsUnit.Pixel);
+            _textFontSize = Math.Clamp(_textFontSize + delta, 10f, 100f);
+            var textOptions = GetToolOptions(AnnotationTool.Text);
+            textOptions.TextFontSize = (int)_textFontSize;
+            _textInputBold = textOptions.TextBold;
+            _textInputItalic = textOptions.TextItalic;
+            _textBox.Font = new Font(
+                "Microsoft YaHei UI",
+                _textFontSize,
+                AnnotationHelper.GetFontStyle(textOptions.TextBold, textOptions.TextItalic),
+                GraphicsUnit.Pixel);
             _textBox.ForeColor = _color;
             AutoSizeTextPanel();
         }
@@ -856,66 +956,185 @@ public sealed class DesktopSnippingOverlayForm : Form
 
     private void RequestSmartCandidate(Point clientPoint)
     {
-        if (_screenBitmap is null || !IsHandleCreated || _phase != Phase.Selecting || _selStart is not null)
+        if (_screenBitmap is null
+            || !IsHandleCreated
+            || _phase != Phase.Selecting
+            || _selStart is not null
+            || (!_smartCandidateIsFallback
+                && !_smartCandidateNeedsRefinement
+                && _smartCandidate.Contains(clientPoint)))
             return;
 
-        var screenPoint = PointToScreen(clientPoint);
-        if (screenPoint == _lastSmartScreenPoint)
-            return;
-
-        _lastSmartScreenPoint = screenPoint;
-        var version = Interlocked.Increment(ref _smartDetectionVersion);
-        _smartDetectionCancellation?.Cancel();
-        _smartDetectionCancellation?.Dispose();
-        var cancellation = new CancellationTokenSource();
-        _smartDetectionCancellation = cancellation;
-        _ = DetectSmartCandidateAsync(screenPoint, version, cancellation);
+        _smartSelectionWorker?.Submit(PointToScreen(clientPoint), Handle);
     }
 
-    private async Task DetectSmartCandidateAsync(
-        Point screenPoint,
-        int version,
-        CancellationTokenSource cancellation)
+    private void ApplySmartCandidateFromWorker(SmartSelectionResult result)
     {
+        if (IsDisposed || Disposing || !IsHandleCreated)
+            return;
+
         try
         {
-            await Task.Delay(35, cancellation.Token);
-            var candidate = await Task.Run(
-                () => _smartSelectionDetector.Detect(screenPoint, Handle),
-                cancellation.Token);
-
-            if (IsDisposed || Disposing
-                || version != Volatile.Read(ref _smartDetectionVersion)
-                || _phase != Phase.Selecting
-                || _selStart is not null)
+            BeginInvoke(new Action(() =>
             {
-                return;
-            }
+                if (IsDisposed || Disposing
+                    || _phase != Phase.Selecting
+                    || _selStart is not null)
+                {
+                    return;
+                }
 
-            _smartCandidate = candidate is null
-                ? Rectangle.Empty
-                : ScreenToClientRectangle(candidate.ScreenBounds);
-            Cursor = _smartCandidate.Contains(PointToClient(Cursor.Position))
-                ? Cursors.Hand
-                : Cursors.Cross;
-            Invalidate();
+                if (result.IsRefinement
+                    && (result.Candidate is null
+                        || (result.Candidate.IsWindowFallback && !_smartCandidateIsFallback)))
+                {
+                    return;
+                }
+
+                var currentScreenPoint = Cursor.Position;
+                if (ToSmartGrid(currentScreenPoint) != ToSmartGrid(result.ScreenPoint))
+                    return;
+
+                if (result.Candidate is not null
+                    && !ShouldApplySmartCandidate(
+                        result.Candidate,
+                        _smartCandidate,
+                        _smartCandidateIsFallback,
+                        _smartCandidateSource,
+                        _smartCandidateConfidence,
+                        _smartCandidate.Contains(PointToClient(currentScreenPoint))))
+                {
+                    return;
+                }
+
+                var previous = _smartCandidate;
+                _smartCandidate = result.Candidate is null
+                    ? Rectangle.Empty
+                    : ScreenToClientRectangle(result.Candidate.ScreenBounds);
+                _smartCandidateIsFallback = result.Candidate?.IsWindowFallback == true;
+                _smartCandidateNeedsRefinement = result.Candidate?.NeedsRefinement == true;
+                _smartCandidateSource = result.Candidate?.Source ?? SmartSelectionSource.WindowFallback;
+                _smartCandidateConfidence = result.Candidate?.Confidence ?? 0;
+                Cursor = _smartCandidate.Contains(PointToClient(Cursor.Position))
+                    ? Cursors.Hand
+                    : Cursors.Cross;
+
+                var dirty = Rectangle.Union(previous, _smartCandidate);
+                dirty.Inflate(4, 4);
+                Invalidate(Rectangle.Intersect(dirty, ClientRectangle));
+            }));
         }
-        catch (OperationCanceledException)
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException)
         {
-            // A newer mouse position superseded this query.
+            // The overlay can close between the worker result and BeginInvoke.
         }
-        catch (Exception)
+    }
+
+    internal static bool ShouldApplySmartCandidate(
+        SmartSelectionCandidate incoming,
+        Rectangle currentBounds,
+        bool currentIsFallback,
+        SmartSelectionSource currentSource,
+        int currentConfidence,
+        bool pointerInsideCurrent)
+    {
+        if (currentBounds.Width < MinSelection
+            || currentBounds.Height < MinSelection
+            || !pointerInsideCurrent)
         {
-            // UI providers can fail for elevated or custom-rendered windows.
-            // Free-form selection remains available in that case.
+            return true;
         }
+
+        // Never regress from a real control/visual candidate to a whole-window
+        // fallback while the pointer is still inside the existing candidate.
+        if (incoming.IsWindowFallback && !currentIsFallback)
+            return false;
+        if (!incoming.IsWindowFallback && currentIsFallback)
+            return true;
+
+        var currentArea = (long)currentBounds.Width * currentBounds.Height;
+        var incomingArea = (long)incoming.ScreenBounds.Width * incoming.ScreenBounds.Height;
+        if (currentArea <= 0)
+            return true;
+
+        // A broad container must not displace an already selected leaf merely
+        // because the container was returned faster.
+        if (incoming.IsContainer
+            && currentSource != SmartSelectionSource.WindowFallback
+            && currentConfidence >= incoming.Confidence)
+        {
+            return false;
+        }
+
+        if (incomingArea > currentArea * 1.25
+            && incoming.Confidence <= currentConfidence)
+        {
+            return false;
+        }
+
+        return incoming.Confidence + 12 >= currentConfidence
+            || incomingArea < currentArea * 0.80;
+    }
+
+    private void UpdateOptionsPanel()
+    {
+        AnnotationToolOptions? options = null;
+        var show = _features.AnnotationEnhancementsEnabled
+            && _toolbar.Visible
+            && AnnotationOptionsPanel.Supports(_tool)
+            && _toolOptions.TryGetValue(_tool, out options);
+
+        _optionsPanel.Visible = show;
+        if (show)
+        {
+            _optionsPanel.Bind(_tool, options!);
+            PositionToolbar();
+            _optionsPanel.BringToFront();
+        }
+    }
+
+    private AnnotationToolOptions GetToolOptions(AnnotationTool tool)
+    {
+        if (_toolOptions.TryGetValue(tool, out var options))
+            return options;
+
+        return new AnnotationToolOptions();
+    }
+
+    private void ApplyTextOptionsToInput()
+    {
+        if (_textBox is null || _tool != AnnotationTool.Text)
+            return;
+
+        var options = GetToolOptions(AnnotationTool.Text);
+        options.Normalize();
+        _textFontSize = options.TextFontSize;
+        _textInputBold = options.TextBold;
+        _textInputItalic = options.TextItalic;
+        _textBox.Font = new Font(
+            "Microsoft YaHei UI",
+            _textFontSize,
+            AnnotationHelper.GetFontStyle(options.TextBold, options.TextItalic),
+            GraphicsUnit.Pixel);
+        _textBox.ForeColor = _color;
+        AutoSizeTextPanel();
     }
 
     private Rectangle ScreenToClientRectangle(Rectangle screenBounds)
     {
         var topLeft = PointToClient(new Point(screenBounds.Left, screenBounds.Top));
-        return new Rectangle(topLeft, screenBounds.Size);
+        var bottomRight = PointToClient(new Point(screenBounds.Right, screenBounds.Bottom));
+        var clientBounds = Rectangle.FromLTRB(
+            Math.Min(topLeft.X, bottomRight.X),
+            Math.Min(topLeft.Y, bottomRight.Y),
+            Math.Max(topLeft.X, bottomRight.X),
+            Math.Max(topLeft.Y, bottomRight.Y));
+        return Rectangle.Intersect(clientBounds, ClientRectangle);
     }
+
+    private static Point ToSmartGrid(Point screenPoint) => new(
+        (int)Math.Floor(screenPoint.X / 6d),
+        (int)Math.Floor(screenPoint.Y / 6d));
 
     #endregion
 
@@ -1060,13 +1279,43 @@ public sealed class DesktopSnippingOverlayForm : Form
 
         AnnotationItem? item = _tool switch
         {
-            AnnotationTool.Rectangle => new RectangleAnnotation { Start = s, End = end, Color = _color },
-            AnnotationTool.Ellipse => new EllipseAnnotation { Start = s, End = end, Color = _color },
-            AnnotationTool.Arrow => new ArrowAnnotation { Start = s, End = end, Color = _color },
-            AnnotationTool.Line => new LineAnnotation { Start = s, End = end, Color = _color },
+            AnnotationTool.Rectangle => new RectangleAnnotation
+            {
+                Start = s,
+                End = end,
+                Color = _color,
+                Opacity = GetToolOptions(AnnotationTool.Rectangle).ShapeOpacity,
+                RenderMode = GetToolOptions(AnnotationTool.Rectangle).ShapeMode
+            },
+            AnnotationTool.Ellipse => new EllipseAnnotation
+            {
+                Start = s,
+                End = end,
+                Color = _color,
+                Opacity = GetToolOptions(AnnotationTool.Ellipse).ShapeOpacity,
+                RenderMode = GetToolOptions(AnnotationTool.Ellipse).ShapeMode
+            },
+            AnnotationTool.Arrow => new ArrowAnnotation
+            {
+                Start = s,
+                End = end,
+                Color = _color,
+                ArrowHead = GetToolOptions(AnnotationTool.Arrow).ArrowHead
+            },
+            AnnotationTool.Line => new LineAnnotation
+            {
+                Start = s,
+                End = end,
+                Color = _color,
+                StrokeStyle = GetToolOptions(AnnotationTool.Line).LineStyle
+            },
             AnnotationTool.Highlight => new HighlightAnnotation { Start = s, End = end },
             AnnotationTool.Mosaic when _freePoints is { Count: >= 2 } =>
-                new MosaicBrushAnnotation { Points = new List<Point>(_freePoints) },
+                new MosaicBrushAnnotation
+                {
+                    Points = new List<Point>(_freePoints),
+                    BrushWidth = GetToolOptions(AnnotationTool.Mosaic).MosaicBrushWidth
+                },
             AnnotationTool.FreeDraw when _freePoints is { Count: >= 2 } =>
                 new FreeDrawAnnotation { Points = new List<Point>(_freePoints), Color = _color },
             _ => null
@@ -1088,16 +1337,32 @@ public sealed class DesktopSnippingOverlayForm : Form
 
     #region Text input
 
-    private void ShowTextInput(Point localPt, string? existingText = null, float? fontSize = null, Color? color = null)
+    private void ShowTextInput(
+        Point localPt,
+        string? existingText = null,
+        float? fontSize = null,
+        Color? color = null,
+        bool? bold = null,
+        bool? italic = null)
     {
         CommitTextInput();
 
         _textInputPosition = localPt;
         _textInputManualSize = false;
-        if (fontSize.HasValue) _textFontSize = fontSize.Value;
+        var textOptions = GetToolOptions(AnnotationTool.Text);
+        textOptions.Normalize();
+        _textFontSize = fontSize.HasValue
+            ? Math.Clamp(fontSize.Value, 10f, 100f)
+            : textOptions.TextFontSize;
+        _textInputBold = bold ?? textOptions.TextBold;
+        _textInputItalic = italic ?? textOptions.TextItalic;
         if (color.HasValue) _color = color.Value;
 
-        var font = new Font("Microsoft YaHei UI", _textFontSize, FontStyle.Regular, GraphicsUnit.Pixel);
+        var font = new Font(
+            "Microsoft YaHei UI",
+            _textFontSize,
+            AnnotationHelper.GetFontStyle(_textInputBold, _textInputItalic),
+            GraphicsUnit.Pixel);
         var initialWidth = 40;
         if (!string.IsNullOrEmpty(existingText))
         {
@@ -1284,7 +1549,9 @@ public sealed class DesktopSnippingOverlayForm : Form
                 Position = _textInputPosition,
                 Text = text,
                 Color = _color,
-                FontSize = _textFontSize
+                FontSize = _textFontSize,
+                Bold = _textInputBold,
+                Italic = _textInputItalic
             });
         }
         else if (_editingAnnotationIndex >= 0 && _editingAnnotationIndex < _annotations.Count)
@@ -1309,6 +1576,8 @@ public sealed class DesktopSnippingOverlayForm : Form
             _textInputDragging = false;
             _textInputResizing = false;
             _textInputManualSize = false;
+            _textInputBold = false;
+            _textInputItalic = false;
         }
         else if (_textBox is not null)
         {
@@ -1318,6 +1587,8 @@ public sealed class DesktopSnippingOverlayForm : Form
             _textInputDragging = false;
             _textInputResizing = false;
             _textInputManualSize = false;
+            _textInputBold = false;
+            _textInputItalic = false;
         }
     }
 
@@ -1431,18 +1702,30 @@ public sealed class DesktopSnippingOverlayForm : Form
 
     private void PositionToolbar()
     {
-        var x = _selection.Left;
-        var y = _selection.Bottom + 10;
-
-        if (x + _toolbar.Width > ClientSize.Width - 10)
-            x = ClientSize.Width - _toolbar.Width - 10;
-        if (x < 10) x = 10;
-
-        if (y + _toolbar.Height > ClientSize.Height - 10)
-            y = _selection.Top - _toolbar.Height - 10;
-        if (y < 10) y = 10;
+        var optionsGap = _optionsPanel.Visible ? 4 : 0;
+        var optionsWidth = _optionsPanel.Visible ? _optionsPanel.Width : 0;
+        var totalWidth = Math.Max(_toolbar.Width, optionsWidth);
+        var totalHeight = _toolbar.Height
+            + optionsGap
+            + (_optionsPanel.Visible ? _optionsPanel.Height : 0);
+        var selectionScreen = RectangleToScreen(_selection);
+        var groupScreenSize = RectangleToScreen(
+            new Rectangle(Point.Empty, new Size(totalWidth, totalHeight))).Size;
+        var screen = Screen.FromPoint(new Point(
+            selectionScreen.Left + selectionScreen.Width / 2,
+            selectionScreen.Top + selectionScreen.Height / 2));
+        var layout = CalculateToolbarLayout(
+            selectionScreen,
+            groupScreenSize,
+            Size.Empty,
+            optionsVisible: false,
+            screen.WorkingArea);
+        var clientLocation = PointToClient(layout.Location);
+        var x = clientLocation.X;
+        var y = clientLocation.Y;
 
         _toolbar.Location = new Point(x, y);
+        _optionsPanel.Location = new Point(x, y + _toolbar.Height + optionsGap);
 
         // Update acrylic backdrop from screen capture
         if (_screenBitmap is not null)
@@ -1450,7 +1733,83 @@ public sealed class DesktopSnippingOverlayForm : Form
             _toolbar.BackdropSource = _screenBitmap;
             _toolbar.BackdropRegion = new Rectangle(x, y, _toolbar.Width, _toolbar.Height);
             _toolbar.Invalidate();
+            if (_optionsPanel.Visible)
+            {
+                _optionsPanel.BackdropSource = _screenBitmap;
+                _optionsPanel.BackdropRegion = new Rectangle(
+                    _optionsPanel.Left,
+                    _optionsPanel.Top,
+                    _optionsPanel.Width,
+                    _optionsPanel.Height);
+                _optionsPanel.Invalidate();
+            }
         }
+    }
+
+    internal static ToolbarLayout CalculateToolbarLayout(
+        Rectangle selection,
+        Size toolbarSize,
+        Size optionsSize,
+        bool optionsVisible,
+        Size clientSize)
+        => CalculateToolbarLayout(
+            selection,
+            toolbarSize,
+            optionsSize,
+            optionsVisible,
+            new Rectangle(Point.Empty, clientSize));
+
+    internal static ToolbarLayout CalculateToolbarLayout(
+        Rectangle selection,
+        Size toolbarSize,
+        Size optionsSize,
+        bool optionsVisible,
+        Rectangle availableBounds)
+    {
+        const int screenMargin = 10;
+        const int outsideGap = 10;
+        const int insidePadding = 6;
+        const int optionsGap = 4;
+
+        var totalWidth = Math.Max(
+            toolbarSize.Width,
+            optionsVisible ? optionsSize.Width : 0);
+        var totalHeight = toolbarSize.Height
+            + (optionsVisible ? optionsGap + optionsSize.Height : 0);
+        var minX = availableBounds.Left + screenMargin;
+        var minY = availableBounds.Top + screenMargin;
+        var maxX = Math.Max(minX, availableBounds.Right - totalWidth - screenMargin);
+        var maxY = Math.Max(minY, availableBounds.Bottom - totalHeight - screenMargin);
+        var x = Math.Clamp(selection.Left, minX, maxX);
+
+        var belowY = selection.Bottom + outsideGap;
+        if (belowY >= minY && belowY <= maxY)
+        {
+            return new ToolbarLayout(
+                new Point(x, belowY),
+                ToolbarPlacement.BelowSelection);
+        }
+
+        var aboveY = selection.Top - outsideGap - totalHeight;
+        if (aboveY >= minY && aboveY <= maxY)
+        {
+            return new ToolbarLayout(
+                new Point(x, aboveY),
+                ToolbarPlacement.AboveSelection);
+        }
+
+        // There is not enough room outside the selection. Keep the complete
+        // toolbar within the captured area when possible, aligned to its
+        // lower edge so it remains close to the selected content.
+        var insideBottomY = selection.Bottom - totalHeight - insidePadding;
+        var insideTopY = selection.Top + insidePadding;
+        var insideY = insideBottomY >= insideTopY
+            ? insideBottomY
+            : insideTopY;
+        insideY = Math.Clamp(insideY, minY, maxY);
+        return new ToolbarLayout(
+            new Point(x, insideY),
+            ToolbarPlacement.InsideSelection);
     }
 
     #endregion

@@ -6,7 +6,7 @@
 
     Configuration = "Release"
     RuntimeIdentifier = "win-x64"
-    Version = "1.0.4.0"
+    Version = "1.0.13.0"
     DisplayName = "EasySnipping"
     PublisherDisplayName = "MSDev_NilTor"
     Description = "Lightweight Windows screenshot tool"

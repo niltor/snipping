@@ -2,7 +2,7 @@
 param(
     [string]$Configuration = "Release",
     [string]$RuntimeIdentifier = "win-x64",
-    [string]$Version = "1.0.4.0",
+    [string]$Version = "1.0.13.0",
     [string]$Publisher = "CN=Snipping Development",
     [string]$PackageName = "Snipping.Capture",
     [string]$PublisherDisplayName = "Snipping",
@@ -72,6 +72,7 @@ dotnet publish $project `
     --runtime $RuntimeIdentifier `
     --self-contained false `
     --no-restore `
+    -p:Version=$Version `
     -p:PublishSingleFile=false `
     -p:PublishTrimmed=false `
     -o $publishDirectory
