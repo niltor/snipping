@@ -1,5 +1,11 @@
 namespace Snipping.Core.Ocr;
 
+public enum OcrBackend
+{
+    Windows = 0,
+    WindowsAi = 1
+}
+
 /// <summary>
 /// A tightly packed BGRA image passed to an OCR provider.
 /// </summary>

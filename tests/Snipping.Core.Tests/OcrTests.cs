@@ -49,4 +49,35 @@ public sealed class OcrTests
         Assert.True(selected.IsSuccess);
         Assert.Equal("using zh-Hans + en-US", selected.InfoMessage);
     }
+
+    [Fact]
+    public void OcrImagePreprocessor_UpscalesSmallImage()
+    {
+        var image = new OcrImage(new byte[80 * 40 * 4], 80, 40, 80 * 4);
+
+        var preparation = OcrImagePreprocessor.Prepare(image, 10000);
+
+        Assert.True(preparation.WasUpscaled);
+        Assert.False(preparation.WasTiled);
+        var slice = Assert.Single(preparation.Slices);
+        Assert.Equal(160, slice.Image.Width);
+        Assert.Equal(80, slice.Image.Height);
+        Assert.Equal(2, slice.Scale);
+    }
+
+    [Fact]
+    public void OcrImagePreprocessor_TilesImagesBeyondMaximumDimension()
+    {
+        var image = new OcrImage(new byte[12000 * 600 * 4], 12000, 600, 12000 * 4);
+
+        var preparation = OcrImagePreprocessor.Prepare(image, 10000);
+
+        Assert.True(preparation.WasTiled);
+        Assert.True(preparation.Slices.Count > 1);
+        Assert.All(preparation.Slices, slice =>
+        {
+            Assert.InRange(slice.Image.Width, 1, 10000);
+            Assert.InRange(slice.Image.Height, 1, 10000);
+        });
+    }
 }

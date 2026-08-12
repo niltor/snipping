@@ -15,7 +15,8 @@ public enum ArrowHeadMode
 public enum LineStrokeStyle
 {
     Solid,
-    Dashed
+    Dashed,
+    Dotted
 }
 
 /// <summary>
@@ -26,6 +27,7 @@ internal sealed class AnnotationToolOptions
     public int ShapeOpacity { get; set; } = 100;
     public ShapeRenderMode ShapeMode { get; set; } = ShapeRenderMode.Outline;
     public ArrowHeadMode ArrowHead { get; set; } = ArrowHeadMode.Single;
+    public LineStrokeStyle ArrowStrokeStyle { get; set; } = LineStrokeStyle.Solid;
     public LineStrokeStyle LineStyle { get; set; } = LineStrokeStyle.Solid;
     public int TextFontSize { get; set; } = 18;
     public bool TextBold { get; set; }

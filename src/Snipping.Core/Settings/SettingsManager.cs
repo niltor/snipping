@@ -142,6 +142,13 @@ public sealed class SettingsManager
                 case "OcrPreferredLanguage":
                     settings.OcrPreferredLanguage = value;
                     break;
+                case "OcrBackend":
+                    if (Enum.TryParse<Ocr.OcrBackend>(value, true, out var ocrBackend)
+                        && Enum.IsDefined(typeof(Ocr.OcrBackend), ocrBackend))
+                    {
+                        settings.OcrBackend = ocrBackend;
+                    }
+                    break;
                 case "StartWithWindows":
                     if (bool.TryParse(value, out var startWithWindows))
                     {
@@ -177,6 +184,7 @@ public sealed class SettingsManager
         $"Theme={settings.Theme}",
         $"Language={settings.Language}",
         $"OcrPreferredLanguage={settings.OcrPreferredLanguage}",
+        $"OcrBackend={settings.OcrBackend}",
         $"StartWithWindows={settings.StartWithWindows.ToString(CultureInfo.InvariantCulture)}",
         $"ShowPerformanceDegradeTip={settings.ShowPerformanceDegradeTip.ToString(CultureInfo.InvariantCulture)}"
     ];
@@ -227,5 +235,9 @@ public sealed class SettingsManager
         }
 
         settings.OcrPreferredLanguage = settings.OcrPreferredLanguage?.Trim() ?? string.Empty;
+        if (!Enum.IsDefined(typeof(Ocr.OcrBackend), settings.OcrBackend))
+        {
+            settings.OcrBackend = Ocr.OcrBackend.Windows;
+        }
     }
 }

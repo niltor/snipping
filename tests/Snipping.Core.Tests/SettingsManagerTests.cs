@@ -1,4 +1,5 @@
 using Snipping.Core.Settings;
+using Snipping.Core.Ocr;
 
 namespace Snipping.Core.Tests;
 
@@ -30,6 +31,7 @@ public sealed class SettingsManagerTests
             PinOpacity = 75,
             FileNamePrefix = "capture",
             OcrPreferredLanguage = "ja-JP",
+            OcrBackend = OcrBackend.WindowsAi,
             StartWithWindows = true
         };
 
@@ -43,6 +45,7 @@ public sealed class SettingsManagerTests
             Assert.Equal(expected.PinOpacity, actual.PinOpacity);
             Assert.Equal(expected.FileNamePrefix, actual.FileNamePrefix);
             Assert.Equal(expected.OcrPreferredLanguage, actual.OcrPreferredLanguage);
+            Assert.Equal(expected.OcrBackend, actual.OcrBackend);
             Assert.Equal(expected.StartWithWindows, actual.StartWithWindows);
         }
         finally

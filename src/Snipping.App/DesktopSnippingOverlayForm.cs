@@ -592,7 +592,8 @@ public sealed class DesktopSnippingOverlayForm : Form
                     Start = s,
                     End = end,
                     Color = _color,
-                    ArrowHead = GetToolOptions(AnnotationTool.Arrow).ArrowHead
+                    ArrowHead = GetToolOptions(AnnotationTool.Arrow).ArrowHead,
+                    StrokeStyle = GetToolOptions(AnnotationTool.Arrow).ArrowStrokeStyle
                 }.Draw(g, _screenBitmap);
                 break;
             }
@@ -1297,10 +1298,11 @@ public sealed class DesktopSnippingOverlayForm : Form
             },
             AnnotationTool.Arrow => new ArrowAnnotation
             {
-                Start = s,
-                End = end,
-                Color = _color,
-                ArrowHead = GetToolOptions(AnnotationTool.Arrow).ArrowHead
+                    Start = s,
+                    End = end,
+                    Color = _color,
+                    ArrowHead = GetToolOptions(AnnotationTool.Arrow).ArrowHead,
+                    StrokeStyle = GetToolOptions(AnnotationTool.Arrow).ArrowStrokeStyle
             },
             AnnotationTool.Line => new LineAnnotation
             {

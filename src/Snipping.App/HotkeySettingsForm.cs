@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using Microsoft.Win32;
+using Snipping.Core.Ocr;
 using Snipping.Core.Settings;
 
 namespace Snipping.App;
@@ -19,6 +20,7 @@ public sealed class HotkeySettingsForm : Form
     private readonly Label _themeLabel;
     private readonly Label _languageLabel;
     private readonly Label _ocrLanguageLabel;
+    private readonly Label _ocrBackendLabel;
     private readonly Label _startupLabel;
     private readonly GroupBox _themeGroup;
     private readonly RadioButton _themeSystemRadio;
@@ -26,6 +28,7 @@ public sealed class HotkeySettingsForm : Form
     private readonly RadioButton _themeDarkRadio;
     private readonly ComboBox _languageCombo;
     private readonly ComboBox _ocrLanguageCombo;
+    private readonly ComboBox _ocrBackendCombo;
     private readonly CheckBox _startupCheckBox;
     private readonly ThemedTabControl _tabs;
     private readonly Panel _generalTab;
@@ -57,6 +60,8 @@ public sealed class HotkeySettingsForm : Form
     public string Language => (_languageCombo.SelectedItem as LanguageOption)?.Value ?? "zh-CN";
     public string OcrPreferredLanguage =>
         (_ocrLanguageCombo.SelectedItem as WindowsOcrService.OcrLanguageOption)?.Value ?? string.Empty;
+    public OcrBackend OcrBackend =>
+        (_ocrBackendCombo.SelectedItem as DisplayOcrBackendOption)?.Value ?? Snipping.Core.Ocr.OcrBackend.Windows;
     public bool StartWithWindows => _startupCheckBox.Checked;
 
     public HotkeySettingsForm(SnippingSettings settings)
@@ -315,8 +320,22 @@ public sealed class HotkeySettingsForm : Form
             Margin = new Padding(0),
             BackColor = Color.Transparent
         };
+        _ocrBackendLabel = CreateLabel("OCR 引擎");
+        _ocrBackendCombo = new ComboBox
+        {
+            Width = 340,
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            DropDownHeight = 180,
+            DrawMode = DrawMode.OwnerDrawFixed,
+            ItemHeight = 24,
+            FlatStyle = FlatStyle.Flat,
+            Margin = new Padding(0, 8, 0, 6)
+        };
+        _ocrBackendCombo.DrawItem += (_, e) => DrawComboItem(_ocrBackendCombo, e);
         advancedFlow.Controls.Add(_advancedTitle);
         advancedFlow.Controls.Add(_advancedHint);
+        advancedFlow.Controls.Add(_ocrBackendLabel);
+        advancedFlow.Controls.Add(_ocrBackendCombo);
         _advancedTab.Controls.Add(advancedFlow);
 
         _aboutTab = new Panel
@@ -437,6 +456,7 @@ public sealed class HotkeySettingsForm : Form
         CancelButton = _cancelButton;
 
         ApplyLanguageTexts();
+        SetOcrBackendSelection(settings.OcrBackend);
         ApplyTheme();
     }
 
@@ -526,6 +546,37 @@ public sealed class HotkeySettingsForm : Form
             ?? _ocrLanguageCombo.Items.OfType<WindowsOcrService.OcrLanguageOption>().First();
     }
 
+    private void SetOcrBackendSelection(OcrBackend backend)
+    {
+        var match = _ocrBackendCombo.Items
+            .OfType<DisplayOcrBackendOption>()
+            .FirstOrDefault(x => x.Value == backend);
+        _ocrBackendCombo.SelectedItem = match
+            ?? _ocrBackendCombo.Items.OfType<DisplayOcrBackendOption>().FirstOrDefault();
+    }
+
+    private void RefreshOcrBackendOptions(bool english, OcrBackend? preferred = null)
+    {
+        var selected = preferred ?? OcrBackend;
+        _ocrBackendCombo.BeginUpdate();
+        try
+        {
+            _ocrBackendCombo.Items.Clear();
+            foreach (var option in OcrServiceFactory.GetAvailableBackends())
+                _ocrBackendCombo.Items.Add(new DisplayOcrBackendOption(option, option.GetDisplay(english)));
+        }
+        finally
+        {
+            _ocrBackendCombo.EndUpdate();
+        }
+
+        var match = _ocrBackendCombo.Items
+            .OfType<DisplayOcrBackendOption>()
+            .FirstOrDefault(x => x.Value == selected);
+        _ocrBackendCombo.SelectedItem = match
+            ?? _ocrBackendCombo.Items.OfType<DisplayOcrBackendOption>().FirstOrDefault();
+    }
+
     private bool IsEnglishSelected() => Language.Equals("en-US", StringComparison.OrdinalIgnoreCase);
 
     private void ApplyLanguageTexts()
@@ -557,8 +608,10 @@ public sealed class HotkeySettingsForm : Form
 
         _advancedTitle.Text = en ? "Advanced features" : "高级功能";
         _advancedHint.Text = en
-            ? "Features and settings for the paid Microsoft Store edition will appear here."
-            : "这里将用于放置 Microsoft Store 付费版解锁的功能和配置。当前暂未开放。";
+            ? "Choose the OCR backend. Windows AI OCR is shown only when this device and Windows version provide it."
+            : "选择 OCR 引擎。只有当前设备和 Windows 版本提供 Windows AI OCR 时才会显示该选项。";
+        _ocrBackendLabel.Text = en ? "OCR backend" : "OCR 引擎";
+        RefreshOcrBackendOptions(en);
 
         _aboutTitle.Text = en ? "About Snipping" : "关于 Snipping";
         _aboutVersionLabel.Text = en
@@ -639,6 +692,8 @@ public sealed class HotkeySettingsForm : Form
         _saveLabel.ForeColor = text;
         _themeLabel.ForeColor = text;
         _languageLabel.ForeColor = text;
+        _ocrLanguageLabel.ForeColor = text;
+        _ocrBackendLabel.ForeColor = text;
         _themeGroup.ForeColor = text;
         _themeGroup.BackColor = Color.Transparent;
         _themeSystemRadio.ForeColor = text;
@@ -669,8 +724,11 @@ public sealed class HotkeySettingsForm : Form
         _languageCombo.ForeColor = text;
         _ocrLanguageCombo.BackColor = inputBg;
         _ocrLanguageCombo.ForeColor = text;
+        _ocrBackendCombo.BackColor = inputBg;
+        _ocrBackendCombo.ForeColor = text;
         _languageCombo.Invalidate();
         _ocrLanguageCombo.Invalidate();
+        _ocrBackendCombo.Invalidate();
 
         ApplyButtonTheme(_okButton, primary: true, dark);
         ApplyButtonTheme(_cancelButton, primary: false, dark);
@@ -697,7 +755,7 @@ public sealed class HotkeySettingsForm : Form
         e.Graphics.FillRectangle(background, e.Bounds);
 
         var text = e.Index >= 0 && e.Index < combo.Items.Count
-            ? combo.Items[e.Index]?.ToString() ?? string.Empty
+            ? GetComboItemText(combo.Items[e.Index])
             : combo.SelectedItem?.ToString() ?? combo.Text;
         var textBounds = new Rectangle(e.Bounds.X + 6, e.Bounds.Y, e.Bounds.Width - 12, e.Bounds.Height);
         TextRenderer.DrawText(
@@ -710,6 +768,19 @@ public sealed class HotkeySettingsForm : Form
 
         if (e.State.HasFlag(DrawItemState.Focus))
             e.DrawFocusRectangle();
+    }
+
+    private static string GetComboItemText(object? item) => item switch
+    {
+        DisplayOcrBackendOption option => option.Display,
+        _ => item?.ToString() ?? string.Empty
+    };
+
+    private sealed record DisplayOcrBackendOption(
+        OcrServiceFactory.OcrBackendOption Option,
+        string Display)
+    {
+        public OcrBackend Value => Option.Value;
     }
 
     private static void ApplyButtonTheme(Button button, bool primary, bool dark)

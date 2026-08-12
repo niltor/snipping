@@ -61,7 +61,6 @@ internal sealed class AnnotationOptionsPanel : RoundedPanel
             case AnnotationTool.Rectangle:
             case AnnotationTool.Ellipse:
                 AddTrackBar(
-                    ToolIcons.Opacity,
                     UiText.T(_language, "透明度", "Opacity"),
                     10,
                     100,
@@ -84,13 +83,33 @@ internal sealed class AnnotationOptionsPanel : RoundedPanel
                 AddToggle(
                     ToolIcons.ArrowSingle,
                     UiText.T(_language, "单箭头", "Single arrow"),
-                    () => _options.ArrowHead == ArrowHeadMode.Single,
-                    () => _options.ArrowHead = ArrowHeadMode.Single);
+                    () => _options.ArrowHead == ArrowHeadMode.Single
+                        && _options.ArrowStrokeStyle == LineStrokeStyle.Solid,
+                    () =>
+                    {
+                        _options.ArrowHead = ArrowHeadMode.Single;
+                        _options.ArrowStrokeStyle = LineStrokeStyle.Solid;
+                    });
                 AddToggle(
                     ToolIcons.ArrowDouble,
                     UiText.T(_language, "双箭头", "Double arrow"),
-                    () => _options.ArrowHead == ArrowHeadMode.Double,
-                    () => _options.ArrowHead = ArrowHeadMode.Double);
+                    () => _options.ArrowHead == ArrowHeadMode.Double
+                        && _options.ArrowStrokeStyle == LineStrokeStyle.Solid,
+                    () =>
+                    {
+                        _options.ArrowHead = ArrowHeadMode.Double;
+                        _options.ArrowStrokeStyle = LineStrokeStyle.Solid;
+                    });
+                AddToggle(
+                    ToolIcons.ArrowDashedSingle,
+                    UiText.T(_language, "虚线单箭头", "Dashed single arrow"),
+                    () => _options.ArrowHead == ArrowHeadMode.Single
+                        && _options.ArrowStrokeStyle == LineStrokeStyle.Dashed,
+                    () =>
+                    {
+                        _options.ArrowHead = ArrowHeadMode.Single;
+                        _options.ArrowStrokeStyle = LineStrokeStyle.Dashed;
+                    });
                 break;
 
             case AnnotationTool.Line:
@@ -104,11 +123,15 @@ internal sealed class AnnotationOptionsPanel : RoundedPanel
                     UiText.T(_language, "虚线", "Dashed line"),
                     () => _options.LineStyle == LineStrokeStyle.Dashed,
                     () => _options.LineStyle = LineStrokeStyle.Dashed);
+                AddToggle(
+                    ToolIcons.LineDotted,
+                    UiText.T(_language, "点线", "Dotted line"),
+                    () => _options.LineStyle == LineStrokeStyle.Dotted,
+                    () => _options.LineStyle = LineStrokeStyle.Dotted);
                 break;
 
             case AnnotationTool.Text:
                 AddTrackBar(
-                    ToolIcons.FontSize,
                     UiText.T(_language, "字号", "Font size"),
                     10,
                     100,
@@ -130,7 +153,6 @@ internal sealed class AnnotationOptionsPanel : RoundedPanel
 
             case AnnotationTool.Mosaic:
                 AddTrackBar(
-                    ToolIcons.BrushSize,
                     UiText.T(_language, "范围", "Brush size"),
                     5,
                     50,
@@ -198,7 +220,6 @@ internal sealed class AnnotationOptionsPanel : RoundedPanel
     }
 
     private void AddTrackBar(
-        Action<Graphics, Rectangle, Color> icon,
         string tooltip,
         int minimum,
         int maximum,
@@ -207,9 +228,6 @@ internal sealed class AnnotationOptionsPanel : RoundedPanel
         int tickFrequency = 10,
         int width = 120)
     {
-        var iconButton = CreateIconButton(icon, tooltip, interactive: false);
-        _content.Controls.Add(iconButton);
-
         var valueLabel = new Label
         {
             AutoSize = false,

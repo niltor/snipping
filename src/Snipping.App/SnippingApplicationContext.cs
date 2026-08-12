@@ -21,11 +21,12 @@ public sealed class SnippingApplicationContext : ApplicationContext
     private SnippingSettings _settings;
     private readonly FeatureEntitlements _featureEntitlements = new();
     private bool _hotkeyRegistered;
+    private readonly Task _startupSynchronization;
 
     public SnippingApplicationContext()
     {
         _settings = _settingsManager.Load(_settingsPath);
-        _ocrService = new WindowsOcrService(_settings);
+        _ocrService = OcrServiceFactory.Create(_settings);
         _applicationIcon = AppIcon.Create();
 
         _notifyIcon = new NotifyIcon
@@ -39,6 +40,7 @@ public sealed class SnippingApplicationContext : ApplicationContext
 
         _hotKeyWindow = new HotKeyWindow(this);
         RegisterConfiguredHotKey();
+        _startupSynchronization = SynchronizeStartupAsync();
     }
 
     private void NotifyIconOnMouseUp(object? sender, MouseEventArgs e)
@@ -105,6 +107,23 @@ public sealed class SnippingApplicationContext : ApplicationContext
 
         try
         {
+            await _startupSynchronization;
+
+            // Task Manager and Windows Settings can change startup state
+            // while the app is running. Use the system state as the source of
+            // truth when opening the settings dialog.
+            try
+            {
+                var currentStartup = await StartupManager.ReconcileAsync(_settings.StartWithWindows);
+                _settings.StartWithWindows = currentStartup.IsEnabled;
+            }
+            catch
+            {
+                // ApplyAsync below will show a localized error if the
+                // registration cannot be read or changed. Keep the stored
+                // preference here so the rest of Settings remains usable.
+            }
+
             using var form = new HotkeySettingsForm(_settings);
             if (form.ShowDialog() != DialogResult.OK)
             {
@@ -128,9 +147,11 @@ public sealed class SnippingApplicationContext : ApplicationContext
             _settings.Theme = form.Theme;
             _settings.Language = form.Language;
             _settings.OcrPreferredLanguage = form.OcrPreferredLanguage;
+            _settings.OcrBackend = form.OcrBackend;
+            StartupRegistration startupRegistration;
             try
             {
-                StartupManager.Apply(form.StartWithWindows);
+                startupRegistration = await StartupManager.ApplyAsync(form.StartWithWindows);
             }
             catch (Exception ex)
             {
@@ -142,13 +163,53 @@ public sealed class SnippingApplicationContext : ApplicationContext
                 return;
             }
 
-            _settings.StartWithWindows = form.StartWithWindows;
+            if (form.StartWithWindows && !startupRegistration.IsEnabled)
+            {
+                var message = startupRegistration.State switch
+                {
+                    StartupRegistrationState.DisabledByUser =>
+                        T("Windows 已在任务管理器中禁用了此应用的开机自启，请在那里重新启用。",
+                            "Windows has disabled startup for this app in Task Manager. Re-enable it there."),
+                    StartupRegistrationState.DisabledByPolicy =>
+                        T("开机自启被系统策略禁用，无法启用。",
+                            "Startup is disabled by system policy and cannot be enabled."),
+                    _ => T("Windows 没有启用此应用的开机自启。",
+                            "Windows did not enable startup for this app.")
+                };
+                MessageBox.Show(
+                    message,
+                    T("设置", "Settings"),
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning);
+                return;
+            }
+
+            _settings.StartWithWindows = startupRegistration.IsEnabled;
             await _settingsManager.SaveAsync(_settingsPath, _settings);
-            _ocrService = new WindowsOcrService(_settings);
+            _ocrService = OcrServiceFactory.Create(_settings);
         }
         finally
         {
             RegisterConfiguredHotKey();
+        }
+    }
+
+    private async Task SynchronizeStartupAsync()
+    {
+        try
+        {
+            var startup = await StartupManager.ReconcileAsync(_settings.StartWithWindows);
+            if (_settings.StartWithWindows == startup.IsEnabled)
+                return;
+
+            _settings.StartWithWindows = startup.IsEnabled;
+            await _settingsManager.SaveAsync(_settingsPath, _settings);
+        }
+        catch
+        {
+            // Startup registration is reconciled again when Settings opens.
+            // A transient package or registry problem must not prevent the
+            // tray app from starting.
         }
     }
 

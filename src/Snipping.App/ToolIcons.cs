@@ -34,11 +34,18 @@ internal static class ToolIcons
     }
 
     public static void Arrow(Graphics g, Rectangle r, Color c)
+        => DrawArrow(g, r, c, DashStyle.Solid);
+
+    public static void ArrowDashedSingle(Graphics g, Rectangle r, Color c)
+        => DrawArrow(g, r, c, DashStyle.Dash);
+
+    private static void DrawArrow(Graphics g, Rectangle r, Color c, DashStyle dashStyle)
     {
         var box = Deflate(r, 5);
         var start = new PointF(box.Left, box.Bottom);
         var end = new PointF(box.Right, box.Top);
         using var pen = new Pen(c, 1.6f);
+        pen.DashStyle = dashStyle;
         pen.CustomEndCap = new AdjustableArrowCap(4, 4);
         g.DrawLine(pen, start, end);
     }
@@ -69,6 +76,17 @@ internal static class ToolIcons
     {
         var box = Deflate(r, 5);
         using var pen = new Pen(c, 1.6f) { DashStyle = DashStyle.Dash };
+        g.DrawLine(pen, box.Left, box.Bottom, box.Right, box.Top);
+    }
+
+    public static void LineDotted(Graphics g, Rectangle r, Color c)
+    {
+        var box = Deflate(r, 5);
+        using var pen = new Pen(c, 1.6f)
+        {
+            DashStyle = DashStyle.Dot,
+            DashCap = DashCap.Round
+        };
         g.DrawLine(pen, box.Left, box.Bottom, box.Right, box.Top);
     }
 

@@ -1,3 +1,5 @@
+using Snipping.Core.Ocr;
+
 namespace Snipping.App;
 
 /// <summary>
@@ -94,4 +96,31 @@ internal static class UiText
         T(language, $"已使用：{primary} + {english} 混合识别。", $"Using {primary} + {english} for mixed recognition.");
     public static string OcrMultipleEngines(string? language, string selected) =>
         T(language, $"检测到多个 OCR 引擎，当前使用：{selected}。", $"Multiple OCR engines found; using {selected}.");
+    public static string OcrImageProcessing(string? language, OcrImagePreparation preparation)
+    {
+        if (preparation.WasTiled)
+        {
+            return T(
+                language,
+                preparation.WasUpscaled
+                    ? $"已将小图放大并分块识别（{preparation.Slices.Count} 块）。"
+                    : $"截图较大，已分块识别（{preparation.Slices.Count} 块）。",
+                preparation.WasUpscaled
+                    ? $"The small image was enlarged and recognized in {preparation.Slices.Count} tiles."
+                    : $"The image was recognized in {preparation.Slices.Count} tiles because it is large.");
+        }
+
+        return preparation.WasUpscaled
+            ? T(language, "已将小图放大后识别。", "The small image was enlarged before recognition.")
+            : string.Empty;
+    }
+
+    public static string OcrWindowsAiUnavailable(string? language, string details) =>
+        T(language, $"Windows AI OCR 当前不可用：{details}", $"Windows AI OCR is unavailable: {details}");
+
+    public static string OcrWindowsAiPreparing(string? language) =>
+        T(language, "正在准备 Windows AI OCR 模型…", "Preparing the Windows AI OCR model…");
+
+    public static string OcrWindowsAiUsing(string? language) =>
+        T(language, "已使用 Windows AI OCR。", "Using Windows AI OCR.");
 }

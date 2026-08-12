@@ -1,5 +1,6 @@
 using Snipping.Core.Capture;
 using Snipping.Core.Export;
+using Snipping.Core.Ocr;
 
 namespace Snipping.Core.Settings;
 
@@ -23,6 +24,8 @@ public sealed class SnippingSettings
     public string Language { get; set; } = "zh-CN";
     /// <summary>Preferred OCR language tag; empty means automatic selection.</summary>
     public string OcrPreferredLanguage { get; set; } = string.Empty;
+    /// <summary>OCR backend selected by the user. Windows AI falls back to Windows OCR when unavailable.</summary>
+    public OcrBackend OcrBackend { get; set; } = OcrBackend.Windows;
     public bool StartWithWindows { get; set; }
     public bool ShowPerformanceDegradeTip { get; set; } = true;
 }

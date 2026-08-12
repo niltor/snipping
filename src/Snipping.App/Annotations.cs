@@ -83,6 +83,7 @@ public sealed class ArrowAnnotation : AnnotationItem
     public Color Color { get; init; } = Color.Red;
     public float Thickness { get; init; } = 3;
     public ArrowHeadMode ArrowHead { get; init; } = ArrowHeadMode.Single;
+    public LineStrokeStyle StrokeStyle { get; init; } = LineStrokeStyle.Solid;
 
     public override void Draw(Graphics g, Bitmap? sourceBitmap)
     {
@@ -90,6 +91,7 @@ public sealed class ArrowAnnotation : AnnotationItem
         var dy = End.Y - Start.Y;
         if (dx * dx + dy * dy < 9) return;
         using var pen = new Pen(Color, Thickness);
+        AnnotationHelper.ApplyStrokeStyle(pen, StrokeStyle);
         pen.CustomEndCap = new AdjustableArrowCap(Thickness + 2, Thickness + 2);
         if (ArrowHead == ArrowHeadMode.Double)
             pen.CustomStartCap = new AdjustableArrowCap(Thickness + 2, Thickness + 2);
@@ -109,9 +111,7 @@ public sealed class LineAnnotation : AnnotationItem
     {
         if (Start == End) return;
         using var pen = new Pen(Color, Thickness);
-        pen.DashStyle = StrokeStyle == LineStrokeStyle.Dashed
-            ? DashStyle.Dash
-            : DashStyle.Solid;
+        AnnotationHelper.ApplyStrokeStyle(pen, StrokeStyle);
         g.DrawLine(pen, Start, End);
     }
 }
@@ -276,5 +276,18 @@ internal static class AnnotationHelper
         if (bold) style |= FontStyle.Bold;
         if (italic) style |= FontStyle.Italic;
         return style;
+    }
+
+    public static void ApplyStrokeStyle(Pen pen, LineStrokeStyle strokeStyle)
+    {
+        pen.DashStyle = strokeStyle switch
+        {
+            LineStrokeStyle.Dashed => DashStyle.Dash,
+            LineStrokeStyle.Dotted => DashStyle.Dot,
+            _ => DashStyle.Solid
+        };
+
+        if (strokeStyle == LineStrokeStyle.Dotted)
+            pen.DashCap = DashCap.Round;
     }
 }

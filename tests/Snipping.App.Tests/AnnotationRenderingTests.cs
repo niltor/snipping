@@ -94,6 +94,33 @@ public sealed class AnnotationRenderingTests
     }
 
     [Fact]
+    public void Arrow_DashedSingleModeLeavesVisibleGaps()
+    {
+        using var bitmap = NewTransparentBitmap(120, 60);
+        using (var graphics = Graphics.FromImage(bitmap))
+        {
+            new ArrowAnnotation
+            {
+                Start = new Point(8, 30),
+                End = new Point(112, 30),
+                ArrowHead = ArrowHeadMode.Single,
+                StrokeStyle = LineStrokeStyle.Dashed
+            }.Draw(graphics, bitmap);
+        }
+
+        var painted = 0;
+        var gaps = 0;
+        for (var x = 8; x <= 100; x++)
+        {
+            if (bitmap.GetPixel(x, 30).A > 0) painted++;
+            else gaps++;
+        }
+
+        Assert.True(painted > 0);
+        Assert.True(gaps > 0);
+    }
+
+    [Fact]
     public void Line_DashedModeLeavesVisibleGaps()
     {
         using var bitmap = NewTransparentBitmap(120, 60);
@@ -104,6 +131,32 @@ public sealed class AnnotationRenderingTests
                 Start = new Point(8, 30),
                 End = new Point(112, 30),
                 StrokeStyle = LineStrokeStyle.Dashed
+            }.Draw(graphics, bitmap);
+        }
+
+        var painted = 0;
+        var gaps = 0;
+        for (var x = 8; x <= 112; x++)
+        {
+            if (bitmap.GetPixel(x, 30).A > 0) painted++;
+            else gaps++;
+        }
+
+        Assert.True(painted > 0);
+        Assert.True(gaps > 0);
+    }
+
+    [Fact]
+    public void Line_DottedModeLeavesVisibleGaps()
+    {
+        using var bitmap = NewTransparentBitmap(120, 60);
+        using (var graphics = Graphics.FromImage(bitmap))
+        {
+            new LineAnnotation
+            {
+                Start = new Point(8, 30),
+                End = new Point(112, 30),
+                StrokeStyle = LineStrokeStyle.Dotted
             }.Draw(graphics, bitmap);
         }
 

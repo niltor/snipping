@@ -78,42 +78,53 @@ public sealed class WindowsOcrService : IOcrService
         try
         {
             ValidateImage(image);
-            using var bitmap = CreateSoftwareBitmap(image);
+            var preparation = OcrImagePreprocessor.Prepare(image, GetMaxImageDimension());
             var candidates = new List<CoreOcrLine>();
             var failures = new List<Exception>();
+            var attempts = 0;
 
             // Windows OCR uses one engine per language. Run the installed
             // profile languages plus Chinese and English, then merge results
             // that refer to the same visual line. This handles mixed text
             // such as "文件 Report 2026" without a third-party OCR model.
-            foreach (var recognizer in _recognizers)
+            foreach (var slice in preparation.Slices)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                try
+                using var bitmap = CreateSoftwareBitmap(slice.Image);
+                foreach (var recognizer in _recognizers)
                 {
-                    var nativeResult = await recognizer.Engine
-                        .RecognizeAsync(bitmap)
-                        .AsTask(cancellationToken);
-                    candidates.AddRange(nativeResult.Lines.Select(CreateLine));
-                }
-                catch (OperationCanceledException)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    failures.Add(new InvalidOperationException(
-                        UiText.OcrEngineFailure(_uiLanguage, recognizer.LanguageTag, ex.Message), ex));
+                    cancellationToken.ThrowIfCancellationRequested();
+                    attempts++;
+                    try
+                    {
+                        var nativeResult = await recognizer.Engine
+                            .RecognizeAsync(bitmap)
+                            .AsTask(cancellationToken);
+                        candidates.AddRange(nativeResult.Lines
+                            .Select(CreateLine)
+                            .Select(line => MapToOriginal(line, slice)));
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch (Exception ex)
+                    {
+                        failures.Add(new InvalidOperationException(
+                            UiText.OcrEngineFailure(_uiLanguage, recognizer.LanguageTag, ex.Message), ex));
+                    }
                 }
             }
 
-            if (candidates.Count == 0 && failures.Count == _recognizers.Count)
+            if (candidates.Count == 0 && failures.Count == attempts && attempts > 0)
             {
                 var detail = string.Join("；", failures.Select(static failure => failure.Message));
                 return new CoreOcrResult(Array.Empty<CoreOcrLine>(), UiText.OcrRecognitionFailed(_uiLanguage, detail));
             }
 
-            return new CoreOcrResult(MergeRecognizedLines(candidates), null, _selectionMessage);
+            return new CoreOcrResult(
+                MergeRecognizedLines(candidates),
+                null,
+                CombineInfo(_selectionMessage, UiText.OcrImageProcessing(_uiLanguage, preparation)));
         }
         catch (OperationCanceledException)
         {
@@ -275,7 +286,23 @@ public sealed class WindowsOcrService : IOcrService
         return OcrLineGeometry.MergeWords(line.Text ?? string.Empty, words);
     }
 
-    private static IReadOnlyList<CoreOcrLine> MergeRecognizedLines(IEnumerable<CoreOcrLine> candidates)
+    private static CoreOcrLine MapToOriginal(CoreOcrLine line, OcrImageSlice slice)
+    {
+        var scale = (float)slice.Scale;
+        var x = (int)Math.Round((slice.OriginX + line.X) / scale);
+        var y = (int)Math.Round((slice.OriginY + line.Y) / scale);
+        var right = (int)Math.Round((slice.OriginX + line.X + line.Width) / scale);
+        var bottom = (int)Math.Round((slice.OriginY + line.Y + line.Height) / scale);
+        return line with
+        {
+            X = x,
+            Y = y,
+            Width = Math.Max(1, right - x),
+            Height = Math.Max(1, bottom - y)
+        };
+    }
+
+    internal static IReadOnlyList<CoreOcrLine> MergeRecognizedLines(IEnumerable<CoreOcrLine> candidates)
     {
         var groups = new List<List<CoreOcrLine>>();
         foreach (var line in OcrLineGeometry.OrderLines(candidates))
@@ -366,7 +393,7 @@ public sealed class WindowsOcrService : IOcrService
             BitmapPixelFormat.Bgra8,
             image.Width,
             image.Height,
-            BitmapAlphaMode.Premultiplied);
+            BitmapAlphaMode.Ignore);
 
         try
         {
@@ -388,5 +415,26 @@ public sealed class WindowsOcrService : IOcrService
             throw new ArgumentException("OCR 图像 stride 小于 BGRA32 行宽。", nameof(image));
         if (image.Pixels.Length < image.RequiredLength)
             throw new ArgumentException("OCR 图像缓冲区长度不足。", nameof(image));
+    }
+
+    internal static int GetMaxImageDimension()
+    {
+        try
+        {
+            return Math.Max(1, (int)OcrEngine.MaxImageDimension);
+        }
+        catch
+        {
+            return 10000;
+        }
+    }
+
+    private static string? CombineInfo(string? first, string? second)
+    {
+        if (string.IsNullOrWhiteSpace(first))
+            return second;
+        if (string.IsNullOrWhiteSpace(second))
+            return first;
+        return $"{first} {second}";
     }
 }
