@@ -1,5 +1,6 @@
 using Snipping.Core.Settings;
 using Snipping.Core.Ocr;
+using Snipping.Core.Export;
 
 namespace Snipping.Core.Tests;
 
@@ -27,6 +28,7 @@ public sealed class SettingsManagerTests
         var expected = new SnippingSettings
         {
             Hotkey = "Ctrl+Alt+A",
+            DefaultExportFormat = ExportFormat.Jpeg,
             JpegQuality = 80,
             PinOpacity = 75,
             FileNamePrefix = "capture",
@@ -41,6 +43,7 @@ public sealed class SettingsManagerTests
             var actual = await manager.LoadAsync(path);
 
             Assert.Equal(expected.Hotkey, actual.Hotkey);
+            Assert.Equal(expected.DefaultExportFormat, actual.DefaultExportFormat);
             Assert.Equal(expected.JpegQuality, actual.JpegQuality);
             Assert.Equal(expected.PinOpacity, actual.PinOpacity);
             Assert.Equal(expected.FileNamePrefix, actual.FileNamePrefix);

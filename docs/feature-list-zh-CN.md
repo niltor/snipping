@@ -56,7 +56,7 @@
 
 ### 输出与增强操作
 
-- 保存为 PNG 或 JPEG；默认格式为 PNG，JPEG 质量默认 90。
+- 保存为 PNG 或 JPEG；可在设置中选择默认格式。PNG 使用无损压缩并优化文件体积，JPEG 质量可调（默认 90），适合优先减小文件大小的场景。
 - 复制选区（含标注）到剪贴板。
 - 置顶贴图：默认快捷键 `Ctrl+T`，默认不透明度 90%。
 - Windows OCR：对当前选区异步识别，在 OCR 面板显示文本和行框；依赖可用的 Windows OCR 语言包。
@@ -70,8 +70,8 @@
 |---|---:|---|
 | `Hotkey` | `Ctrl+Shift+S` | 正式入口全局截图热键 |
 | `DefaultCaptureMode` | `Region` | 已持久化；当前正式入口尚未消费该值 |
-| `DefaultExportFormat` | `Png` | 正式覆盖编辑器保存时使用 |
-| `JpegQuality` | `90` | JPEG 编码质量，读写时限制在 1–100 |
+| `DefaultExportFormat` | `Png` | 设置中的默认保存格式；PNG 无损，JPEG 文件通常更小 |
+| `JpegQuality` | `90` | 设置中的 JPEG 编码质量，读写时限制在 1–100；选择 PNG 时不生效 |
 | `ShowEditorInTaskbar` | `false` | 当前覆盖编辑器不显示任务栏入口 |
 | `SaveDirectory` | `%UserProfile%\\Pictures\\Snipping` | 保存目录 |
 | `FileNamePrefix` | `snip` | 导出文件名前缀 |

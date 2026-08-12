@@ -798,14 +798,14 @@ public sealed class DesktopSnippingOverlayForm : Form
                 }
                 else
                 {
-                    Cursor = Cursors.Hand;
+                    Cursor = Cursors.Cross;
                 }
 
                 return;
             }
 
             RequestSmartCandidate(pt);
-            Cursor = _smartCandidate.Contains(pt) ? Cursors.Hand : Cursors.Cross;
+            Cursor = Cursors.Cross;
             return;
         }
 
@@ -1016,9 +1016,7 @@ public sealed class DesktopSnippingOverlayForm : Form
                 _smartCandidateNeedsRefinement = result.Candidate?.NeedsRefinement == true;
                 _smartCandidateSource = result.Candidate?.Source ?? SmartSelectionSource.WindowFallback;
                 _smartCandidateConfidence = result.Candidate?.Confidence ?? 0;
-                Cursor = _smartCandidate.Contains(PointToClient(Cursor.Position))
-                    ? Cursors.Hand
-                    : Cursors.Cross;
+                Cursor = Cursors.Cross;
 
                 var dirty = Rectangle.Union(previous, _smartCandidate);
                 dirty.Inflate(4, 4);
@@ -2084,7 +2082,7 @@ public sealed class DesktopSnippingOverlayForm : Form
         using var ms = new MemoryStream();
         if (fmt == ExportFormat.Png)
         {
-            bmp.Save(ms, ImageFormat.Png);
+            return PngEncoder.Encode(bmp);
         }
         else
         {

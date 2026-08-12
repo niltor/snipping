@@ -143,6 +143,8 @@ public sealed class SnippingApplicationContext : ApplicationContext
             _settings.Hotkey = form.Hotkey;
             _settings.PinShortcut = string.IsNullOrWhiteSpace(form.PinShortcut) ? _settings.PinShortcut : form.PinShortcut;
             _settings.PinOpacity = form.PinOpacity;
+            _settings.DefaultExportFormat = form.DefaultExportFormat;
+            _settings.JpegQuality = form.JpegQuality;
             _settings.SaveDirectory = string.IsNullOrWhiteSpace(form.SaveDirectory) ? _settings.SaveDirectory : form.SaveDirectory;
             _settings.Theme = form.Theme;
             _settings.Language = form.Language;

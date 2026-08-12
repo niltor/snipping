@@ -2,6 +2,14 @@
 
 当前项目使用命令行生成 MSIX，商店发布不需要把开发自签名证书提交给用户。微软商店会在审核通过后重新签名 MSIX。
 
+发布资料已经整理到：
+
+- [中文商店文案](StoreListing-zh-CN.md)
+- [English Store listing](StoreListing-en-US.md)
+- [发布清单](StoreSubmissionChecklist.md)
+- [中文隐私政策草稿](PrivacyPolicy-zh-CN.md)
+- [English privacy policy draft](PrivacyPolicy-en-US.md)
+
 ## 资源
 
 商店图标位于：

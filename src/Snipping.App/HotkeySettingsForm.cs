@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using Microsoft.Win32;
+using Snipping.Core.Export;
 using Snipping.Core.Ocr;
 using Snipping.Core.Settings;
 
@@ -11,17 +12,24 @@ public sealed class HotkeySettingsForm : Form
     private readonly TextBox _saveDirectoryTextBox;
     private readonly TextBox _pinShortcutTextBox;
     private readonly NumericUpDown _pinOpacityNumeric;
+    private readonly NumericUpDown _jpegQualityNumeric;
     private readonly Panel _card;
     private readonly Label _hotkeyLabel;
     private readonly Label _pinLabel;
     private readonly Label _pinOpacityLabel;
     private readonly Label _saveLabel;
+    private readonly Label _exportFormatLabel;
+    private readonly Label _jpegQualityLabel;
     private readonly Label _hotkeyHint;
     private readonly Label _themeLabel;
     private readonly Label _languageLabel;
     private readonly Label _ocrLanguageLabel;
     private readonly Label _ocrBackendLabel;
     private readonly Label _startupLabel;
+    private readonly Label _generalTitle;
+    private readonly Label _generalHint;
+    private readonly Label _appearanceTitle;
+    private readonly Label _appearanceHint;
     private readonly GroupBox _themeGroup;
     private readonly RadioButton _themeSystemRadio;
     private readonly RadioButton _themeLightRadio;
@@ -29,11 +37,14 @@ public sealed class HotkeySettingsForm : Form
     private readonly ComboBox _languageCombo;
     private readonly ComboBox _ocrLanguageCombo;
     private readonly ComboBox _ocrBackendCombo;
+    private readonly ComboBox _exportFormatCombo;
     private readonly CheckBox _startupCheckBox;
     private readonly ThemedTabControl _tabs;
     private readonly Panel _generalTab;
+    private readonly Panel _appearanceTab;
     private readonly Panel _advancedTab;
     private readonly Panel _aboutTab;
+    private readonly Panel _appearanceCard;
     private readonly Label _advancedTitle;
     private readonly Label _advancedHint;
     private readonly Label _aboutTitle;
@@ -56,6 +67,9 @@ public sealed class HotkeySettingsForm : Form
     public string SaveDirectory => _saveDirectoryTextBox.Text.Trim();
     public string PinShortcut => _pinShortcutTextBox.Text.Trim();
     public int PinOpacity => (int)_pinOpacityNumeric.Value;
+    public ExportFormat DefaultExportFormat =>
+        (_exportFormatCombo.SelectedItem as ExportFormatOption)?.Value ?? ExportFormat.Png;
+    public int JpegQuality => (int)_jpegQualityNumeric.Value;
     public string Theme => _themeDarkRadio.Checked ? "Dark" : _themeLightRadio.Checked ? "Light" : "System";
     public string Language => (_languageCombo.SelectedItem as LanguageOption)?.Value ?? "zh-CN";
     public string OcrPreferredLanguage =>
@@ -74,8 +88,8 @@ public sealed class HotkeySettingsForm : Form
         MaximizeBox = false;
         MinimizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
-        MinimumSize = new Size(640, 460);
-        Size = new Size(720, 510);
+        MinimumSize = new Size(700, 560);
+        Size = new Size(760, 600);
 
         var root = new TableLayoutPanel
         {
@@ -91,7 +105,7 @@ public sealed class HotkeySettingsForm : Form
         _card = new Panel
         {
             Dock = DockStyle.Fill,
-            Padding = new Padding(12),
+            Padding = new Padding(16),
             Margin = new Padding(0, 0, 0, 8)
         };
         _card.Paint += (_, e) =>
@@ -113,14 +127,14 @@ public sealed class HotkeySettingsForm : Form
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 170));
+        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // startup
         grid.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // hotkey
         grid.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // pin
         grid.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // pin opacity
         grid.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // save
-        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // theme
-        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // language
+        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // export format
+        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // jpeg quality
         grid.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // OCR language
-        grid.RowStyles.Add(new RowStyle(SizeType.AutoSize)); // startup
         grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
         _hotkeyLabel = CreateLabel("全局截图快捷键");
@@ -138,6 +152,8 @@ public sealed class HotkeySettingsForm : Form
             Maximum = 100,
             Value = Math.Clamp(settings.PinOpacity, 1, 100),
             Increment = 1,
+            AutoSize = false,
+            Height = 32,
             Width = 120,
             Anchor = AnchorStyles.Left,
             Margin = new Padding(0, 2, 0, 6)
@@ -157,11 +173,42 @@ public sealed class HotkeySettingsForm : Form
         StyleButton(_browseButton);
         _browseButton.Click += (_, _) => BrowseFolder();
 
+        _exportFormatLabel = CreateLabel("保存格式");
+        _exportFormatCombo = new ComboBox
+        {
+            Dock = DockStyle.Left,
+            Width = 300,
+            DropDownStyle = ComboBoxStyle.DropDownList,
+            DropDownHeight = 120,
+            DrawMode = DrawMode.OwnerDrawFixed,
+            ItemHeight = 24,
+            Height = 32,
+            FlatStyle = FlatStyle.Flat,
+            Margin = new Padding(0, 2, 0, 6)
+        };
+        _exportFormatCombo.DrawItem += (_, e) => DrawComboItem(_exportFormatCombo, e);
+        _exportFormatCombo.SelectedIndexChanged += (_, _) => UpdateJpegQualityState();
+
+        _jpegQualityLabel = CreateLabel("JPEG 质量");
+        _jpegQualityNumeric = new NumericUpDown
+        {
+            Minimum = 1,
+            Maximum = 100,
+            Value = Math.Clamp(settings.JpegQuality, 1, 100),
+            Increment = 1,
+            AutoSize = false,
+            Height = 32,
+            Width = 120,
+            Anchor = AnchorStyles.Left,
+            Margin = new Padding(0, 2, 0, 6)
+        };
+
         _themeLabel = CreateLabel("主题");
         _themeGroup = new GroupBox
         {
             Dock = DockStyle.Fill,
             AutoSize = true,
+            Height = 44,
             Padding = new Padding(8, 6, 8, 6),
             Margin = new Padding(0, 2, 0, 6)
         };
@@ -190,11 +237,12 @@ public sealed class HotkeySettingsForm : Form
         _languageCombo = new ComboBox
         {
             Dock = DockStyle.Left,
-            Width = 220,
+            Width = 300,
             DropDownStyle = ComboBoxStyle.DropDownList,
             DropDownHeight = 180,
             DrawMode = DrawMode.OwnerDrawFixed,
             ItemHeight = 24,
+            Height = 32,
             FlatStyle = FlatStyle.Flat,
             Margin = new Padding(0, 2, 0, 6)
         };
@@ -216,6 +264,7 @@ public sealed class HotkeySettingsForm : Form
             DropDownHeight = 260,
             DrawMode = DrawMode.OwnerDrawFixed,
             ItemHeight = 24,
+            Height = 32,
             FlatStyle = FlatStyle.Flat,
             Margin = new Padding(0, 2, 0, 6)
         };
@@ -229,7 +278,7 @@ public sealed class HotkeySettingsForm : Form
         {
             AutoSize = true,
             Checked = settings.StartWithWindows,
-            Margin = new Padding(0, 3, 0, 6)
+            Margin = new Padding(0, 5, 0, 6)
         };
 
         _hotkeyHint = new Label
@@ -239,6 +288,21 @@ public sealed class HotkeySettingsForm : Form
             Text = "点击输入框后\n直接按组合键\n(如 Ctrl+Shift+S)",
             BackColor = Color.Transparent,
             Padding = new Padding(6, 1, 0, 0)
+        };
+
+        _generalTitle = new Label
+        {
+            AutoSize = true,
+            Font = new Font("Segoe UI", 14f, FontStyle.Bold),
+            Margin = new Padding(0, 0, 0, 4),
+            BackColor = Color.Transparent
+        };
+        _generalHint = new Label
+        {
+            AutoSize = true,
+            MaximumSize = new Size(640, 0),
+            Margin = new Padding(0, 0, 0, 14),
+            BackColor = Color.Transparent
         };
 
         var saveRowPanel = new TableLayoutPanel
@@ -257,41 +321,127 @@ public sealed class HotkeySettingsForm : Form
         saveRowPanel.Controls.Add(_saveDirectoryTextBox, 0, 0);
         saveRowPanel.Controls.Add(_browseButton, 1, 0);
 
-        grid.Controls.Add(_hotkeyLabel, 0, 0);
-        grid.Controls.Add(_hotkeyTextBox, 1, 0);
-        grid.Controls.Add(_hotkeyHint, 2, 0);
+        grid.Controls.Add(_startupLabel, 0, 0);
+        grid.Controls.Add(_startupCheckBox, 1, 0);
+
+        grid.Controls.Add(_hotkeyLabel, 0, 1);
+        grid.Controls.Add(_hotkeyTextBox, 1, 1);
+        grid.Controls.Add(_hotkeyHint, 2, 1);
         grid.SetRowSpan(_hotkeyHint, 2);
 
-        grid.Controls.Add(_pinLabel, 0, 1);
-        grid.Controls.Add(_pinShortcutTextBox, 1, 1);
+        grid.Controls.Add(_pinLabel, 0, 2);
+        grid.Controls.Add(_pinShortcutTextBox, 1, 2);
 
-        grid.Controls.Add(_pinOpacityLabel, 0, 2);
-        grid.Controls.Add(_pinOpacityNumeric, 1, 2);
+        grid.Controls.Add(_pinOpacityLabel, 0, 3);
+        grid.Controls.Add(_pinOpacityNumeric, 1, 3);
 
-        grid.Controls.Add(_saveLabel, 0, 3);
-        grid.Controls.Add(saveRowPanel, 1, 3);
+        grid.Controls.Add(_saveLabel, 0, 4);
+        grid.Controls.Add(saveRowPanel, 1, 4);
         grid.SetColumnSpan(saveRowPanel, 2);
 
-        grid.Controls.Add(_themeLabel, 0, 4);
-        grid.Controls.Add(_themeGroup, 1, 4);
-        grid.SetColumnSpan(_themeGroup, 2);
+        grid.Controls.Add(_exportFormatLabel, 0, 5);
+        grid.Controls.Add(_exportFormatCombo, 1, 5);
 
-        grid.Controls.Add(_languageLabel, 0, 5);
-        grid.Controls.Add(_languageCombo, 1, 5);
+        grid.Controls.Add(_jpegQualityLabel, 0, 6);
+        grid.Controls.Add(_jpegQualityNumeric, 1, 6);
 
-        grid.Controls.Add(_ocrLanguageLabel, 0, 6);
-        grid.Controls.Add(_ocrLanguageCombo, 1, 6);
+        grid.Controls.Add(_ocrLanguageLabel, 0, 7);
+        grid.Controls.Add(_ocrLanguageCombo, 1, 7);
 
-        grid.Controls.Add(_startupLabel, 0, 7);
-        grid.Controls.Add(_startupCheckBox, 1, 7);
+        var generalLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 3,
+            BackColor = Color.Transparent,
+            Margin = new Padding(0),
+            Padding = new Padding(0)
+        };
+        generalLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        generalLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        generalLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        generalLayout.Controls.Add(_generalTitle, 0, 0);
+        generalLayout.Controls.Add(_generalHint, 0, 1);
+        generalLayout.Controls.Add(grid, 0, 2);
 
-        _card.Controls.Add(grid);
+        _card.Controls.Add(generalLayout);
 
         _generalTab = new Panel
         {
-            Padding = new Padding(8)
+            Padding = new Padding(8),
+            BackColor = Color.Transparent
         };
         _generalTab.Controls.Add(_card);
+
+        _appearanceTab = new Panel
+        {
+            Padding = new Padding(8),
+            BackColor = Color.Transparent
+        };
+        _appearanceCard = new Panel
+        {
+            Dock = DockStyle.Fill,
+            Padding = new Padding(16),
+            Margin = new Padding(0)
+        };
+        _appearanceCard.Paint += (_, e) =>
+        {
+            using var pen = new Pen(_cardBorderColor, 1);
+            var r = _appearanceCard.ClientRectangle;
+            r.Width -= 1;
+            r.Height -= 1;
+            e.Graphics.DrawRectangle(pen, r);
+        };
+        _appearanceTitle = new Label
+        {
+            AutoSize = true,
+            Font = new Font("Segoe UI", 14f, FontStyle.Bold),
+            Margin = new Padding(0, 0, 0, 4),
+            BackColor = Color.Transparent
+        };
+        _appearanceHint = new Label
+        {
+            AutoSize = true,
+            MaximumSize = new Size(640, 0),
+            Margin = new Padding(0, 0, 0, 14),
+            BackColor = Color.Transparent
+        };
+        var appearanceGrid = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            ColumnCount = 2,
+            RowCount = 2,
+            AutoSize = true,
+            BackColor = Color.Transparent,
+            Margin = new Padding(0),
+            Padding = new Padding(0)
+        };
+        appearanceGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
+        appearanceGrid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        appearanceGrid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        appearanceGrid.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        appearanceGrid.Controls.Add(_themeLabel, 0, 0);
+        appearanceGrid.Controls.Add(_themeGroup, 1, 0);
+        appearanceGrid.Controls.Add(_languageLabel, 0, 1);
+        appearanceGrid.Controls.Add(_languageCombo, 1, 1);
+
+        var appearanceLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 3,
+            BackColor = Color.Transparent,
+            Margin = new Padding(0),
+            Padding = new Padding(0)
+        };
+        appearanceLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        appearanceLayout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        appearanceLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        appearanceLayout.Controls.Add(_appearanceTitle, 0, 0);
+        appearanceLayout.Controls.Add(_appearanceHint, 0, 1);
+        appearanceLayout.Controls.Add(appearanceGrid, 0, 2);
+        _appearanceCard.Controls.Add(appearanceLayout);
+        _appearanceTab.Controls.Add(_appearanceCard);
 
         _advancedTab = new Panel
         {
@@ -323,11 +473,12 @@ public sealed class HotkeySettingsForm : Form
         _ocrBackendLabel = CreateLabel("OCR 引擎");
         _ocrBackendCombo = new ComboBox
         {
-            Width = 340,
+            Width = 300,
             DropDownStyle = ComboBoxStyle.DropDownList,
             DropDownHeight = 180,
             DrawMode = DrawMode.OwnerDrawFixed,
             ItemHeight = 24,
+            Height = 32,
             FlatStyle = FlatStyle.Flat,
             Margin = new Padding(0, 8, 0, 6)
         };
@@ -414,6 +565,7 @@ public sealed class HotkeySettingsForm : Form
         };
         _tabs.SelectedIndexChanged += (_, _) => _tabs.Invalidate();
         _tabs.AddPage(_generalTab);
+        _tabs.AddPage(_appearanceTab);
         _tabs.AddPage(_advancedTab);
         _tabs.AddPage(_aboutTab);
 
@@ -451,6 +603,9 @@ public sealed class HotkeySettingsForm : Form
         SetThemeSelection(settings.Theme);
         SetLanguageSelection(settings.Language);
         SetOcrLanguageSelection(settings.OcrPreferredLanguage);
+        RefreshExportFormatOptions(
+            string.Equals(settings.Language, "en-US", StringComparison.OrdinalIgnoreCase),
+            settings.DefaultExportFormat);
 
         AcceptButton = _okButton;
         CancelButton = _cancelButton;
@@ -497,6 +652,8 @@ public sealed class HotkeySettingsForm : Form
     private static TextBox CreateInputBox(string value, bool readOnly) => new()
     {
         Dock = DockStyle.Fill,
+        AutoSize = false,
+        Height = 32,
         Margin = new Padding(0, 2, 0, 6),
         Text = value,
         ReadOnly = readOnly,
@@ -509,8 +666,9 @@ public sealed class HotkeySettingsForm : Form
         button.FlatAppearance.BorderSize = 1;
         button.FlatAppearance.MouseDownBackColor = Color.FromArgb(90, 90, 90);
         button.FlatAppearance.MouseOverBackColor = Color.FromArgb(80, 80, 80);
-        button.MinimumSize = new Size(80, 32);
-        button.Padding = new Padding(12, 2, 12, 2);
+        button.MinimumSize = new Size(96, 34);
+        button.Height = 34;
+        button.Padding = new Padding(14, 2, 14, 2);
     }
 
     private void SetThemeSelection(string theme)
@@ -585,12 +743,23 @@ public sealed class HotkeySettingsForm : Form
 
         Text = en ? "Snipping Settings" : "截图设置";
         _generalTab.Text = en ? "General" : "常规";
+        _appearanceTab.Text = en ? "Appearance" : "外观";
         _advancedTab.Text = en ? "Advanced" : "高级";
         _aboutTab.Text = en ? "About" : "关于";
-        _hotkeyLabel.Text = en ? "Global snip shortcut" : "全局截图快捷键";
+        _generalTitle.Text = en ? "Capture settings" : "截图设置";
+        _generalHint.Text = en
+            ? "Configure startup, shortcuts, output format and OCR preferences."
+            : "配置开机启动、快捷键、保存格式和 OCR 偏好。";
+        _appearanceTitle.Text = en ? "Appearance" : "外观设置";
+        _appearanceHint.Text = en
+            ? "Choose the visual theme and display language for the settings window."
+            : "选择设置窗口使用的主题和显示语言。";
+        _hotkeyLabel.Text = en ? "ScreenShot Key" : "全局截图快捷键";
         _pinLabel.Text = en ? "Pin shortcut" : "置顶贴图快捷键";
         _pinOpacityLabel.Text = en ? "Pin opacity (%)" : "贴图不透明度 (%)";
         _saveLabel.Text = en ? "Save directory" : "保存目录";
+        _exportFormatLabel.Text = en ? "Save format" : "保存格式";
+        _jpegQualityLabel.Text = en ? "JPEG quality" : "JPEG 质量";
         _themeLabel.Text = en ? "Theme" : "主题";
         _languageLabel.Text = en ? "Language" : "语言";
         _ocrLanguageLabel.Text = en ? "OCR preference" : "OCR 偏好语言";
@@ -601,7 +770,7 @@ public sealed class HotkeySettingsForm : Form
             ? "Click a shortcut box,\nthen press keys directly\n(e.g. Ctrl+Shift+S)"
             : "点击输入框后\n直接按组合键\n(如 Ctrl+Shift+S)";
 
-        _themeGroup.Text = en ? "Appearance" : "外观";
+        _themeGroup.Text = en ? "Theme" : "主题";
         _themeSystemRadio.Text = en ? "System" : "跟随系统";
         _themeLightRadio.Text = en ? "Light" : "浅色";
         _themeDarkRadio.Text = en ? "Dark" : "深色";
@@ -632,6 +801,7 @@ public sealed class HotkeySettingsForm : Form
         _browseButton.Text = en ? "Browse" : "浏览";
         _okButton.Text = en ? "Save" : "保存";
         _cancelButton.Text = en ? "Cancel" : "取消";
+        RefreshExportFormatOptions(en);
     }
 
     private static string GetApplicationVersion() =>
@@ -680,20 +850,31 @@ public sealed class HotkeySettingsForm : Form
         _tabs.HeaderBorderColor = _tabBorderColor;
         _tabs.HeaderTextColor = text;
         _generalTab.BackColor = bg;
+        _appearanceTab.BackColor = bg;
         _advancedTab.BackColor = bg;
         _aboutTab.BackColor = bg;
         _tabs.Invalidate();
 
         _card.BackColor = cardBg;
+        _appearanceCard.BackColor = cardBg;
 
+        _generalTitle.ForeColor = text;
+        _generalHint.ForeColor = subText;
+        _appearanceTitle.ForeColor = text;
+        _appearanceHint.ForeColor = subText;
         _hotkeyLabel.ForeColor = text;
         _pinLabel.ForeColor = text;
         _pinOpacityLabel.ForeColor = text;
         _saveLabel.ForeColor = text;
+        _exportFormatLabel.ForeColor = text;
+        _jpegQualityLabel.ForeColor = text;
         _themeLabel.ForeColor = text;
         _languageLabel.ForeColor = text;
         _ocrLanguageLabel.ForeColor = text;
         _ocrBackendLabel.ForeColor = text;
+        _startupLabel.ForeColor = text;
+        _startupCheckBox.ForeColor = text;
+        _startupCheckBox.BackColor = Color.Transparent;
         _themeGroup.ForeColor = text;
         _themeGroup.BackColor = Color.Transparent;
         _themeSystemRadio.ForeColor = text;
@@ -719,14 +900,19 @@ public sealed class HotkeySettingsForm : Form
         ApplyTextBoxTheme(_saveDirectoryTextBox, inputBg, text);
         _pinOpacityNumeric.BackColor = inputBg;
         _pinOpacityNumeric.ForeColor = text;
+        _jpegQualityNumeric.BackColor = inputBg;
+        _jpegQualityNumeric.ForeColor = text;
 
         _languageCombo.BackColor = inputBg;
         _languageCombo.ForeColor = text;
+        _exportFormatCombo.BackColor = inputBg;
+        _exportFormatCombo.ForeColor = text;
         _ocrLanguageCombo.BackColor = inputBg;
         _ocrLanguageCombo.ForeColor = text;
         _ocrBackendCombo.BackColor = inputBg;
         _ocrBackendCombo.ForeColor = text;
         _languageCombo.Invalidate();
+        _exportFormatCombo.Invalidate();
         _ocrLanguageCombo.Invalidate();
         _ocrBackendCombo.Invalidate();
 
@@ -735,6 +921,7 @@ public sealed class HotkeySettingsForm : Form
         ApplyButtonTheme(_browseButton, primary: false, dark);
 
         _card.Invalidate();
+        _appearanceCard.Invalidate();
         ApplyWindowBackdrop();
     }
 
@@ -773,14 +960,53 @@ public sealed class HotkeySettingsForm : Form
     private static string GetComboItemText(object? item) => item switch
     {
         DisplayOcrBackendOption option => option.Display,
+        ExportFormatOption option => option.Display,
         _ => item?.ToString() ?? string.Empty
     };
+
+    private void RefreshExportFormatOptions(bool english, ExportFormat? preferred = null)
+    {
+        var selected = preferred ?? DefaultExportFormat;
+        _exportFormatCombo.BeginUpdate();
+        try
+        {
+            _exportFormatCombo.Items.Clear();
+            _exportFormatCombo.Items.Add(new ExportFormatOption(
+                ExportFormat.Png,
+                english ? "PNG (lossless)" : "PNG（无损）"));
+            _exportFormatCombo.Items.Add(new ExportFormatOption(
+                ExportFormat.Jpeg,
+                english ? "JPEG (smaller files)" : "JPEG（文件更小）"));
+        }
+        finally
+        {
+            _exportFormatCombo.EndUpdate();
+        }
+
+        var match = _exportFormatCombo.Items
+            .OfType<ExportFormatOption>()
+            .FirstOrDefault(x => x.Value == selected);
+        _exportFormatCombo.SelectedItem = match ?? _exportFormatCombo.Items[0];
+        UpdateJpegQualityState();
+    }
+
+    private void UpdateJpegQualityState()
+    {
+        var jpeg = DefaultExportFormat == ExportFormat.Jpeg;
+        _jpegQualityNumeric.Enabled = jpeg;
+        _jpegQualityLabel.Enabled = jpeg;
+    }
 
     private sealed record DisplayOcrBackendOption(
         OcrServiceFactory.OcrBackendOption Option,
         string Display)
     {
         public OcrBackend Value => Option.Value;
+    }
+
+    private sealed record ExportFormatOption(ExportFormat Value, string Display)
+    {
+        public override string ToString() => Display;
     }
 
     private static void ApplyButtonTheme(Button button, bool primary, bool dark)

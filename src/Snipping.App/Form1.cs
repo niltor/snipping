@@ -124,7 +124,8 @@ public partial class Form1 : Form
         {
             InitialDirectory = _settings.SaveDirectory,
             FileName = _exportManager.BuildFileName(_settings.FileNamePrefix, _settings.DefaultExportFormat, DateTimeOffset.Now),
-            Filter = "PNG|*.png|JPEG|*.jpg"
+            Filter = "PNG|*.png|JPEG|*.jpg",
+            FilterIndex = _settings.DefaultExportFormat == ExportFormat.Png ? 1 : 2
         };
 
         if (dialog.ShowDialog(this) != DialogResult.OK)
@@ -291,7 +292,7 @@ public partial class Form1 : Form
         using var ms = new MemoryStream();
         if (format == ExportFormat.Png)
         {
-            bitmap.Save(ms, ImageFormat.Png);
+            return PngEncoder.Encode(bitmap);
         }
         else
         {
