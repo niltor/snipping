@@ -27,5 +27,7 @@ public sealed class SnippingSettings
     /// <summary>OCR backend selected by the user. Windows AI falls back to Windows OCR when unavailable.</summary>
     public OcrBackend OcrBackend { get; set; } = OcrBackend.Windows;
     public bool StartWithWindows { get; set; }
+    /// <summary>Transparency percentage for pinned image window (0-90).</summary>
+    public int PinWindowTransparencyPercent { get; set; } = 10;
     public bool ShowPerformanceDegradeTip { get; set; } = true;
 }

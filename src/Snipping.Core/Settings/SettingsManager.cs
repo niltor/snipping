@@ -155,6 +155,12 @@ public sealed class SettingsManager
                         settings.StartWithWindows = startWithWindows;
                     }
                     break;
+                case "PinWindowTransparencyPercent":
+                    if (int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var pinWindowTransparencyPercent))
+                    {
+                        settings.PinWindowTransparencyPercent = pinWindowTransparencyPercent;
+                    }
+                    break;
                 case "ShowPerformanceDegradeTip":
                     if (bool.TryParse(value, out var showPerformanceDegradeTip))
                     {
@@ -186,6 +192,7 @@ public sealed class SettingsManager
         $"OcrPreferredLanguage={settings.OcrPreferredLanguage}",
         $"OcrBackend={settings.OcrBackend}",
         $"StartWithWindows={settings.StartWithWindows.ToString(CultureInfo.InvariantCulture)}",
+        $"PinWindowTransparencyPercent={settings.PinWindowTransparencyPercent.ToString(CultureInfo.InvariantCulture)}",
         $"ShowPerformanceDegradeTip={settings.ShowPerformanceDegradeTip.ToString(CultureInfo.InvariantCulture)}"
     ];
 
@@ -239,5 +246,6 @@ public sealed class SettingsManager
         {
             settings.OcrBackend = Ocr.OcrBackend.Windows;
         }
+        settings.PinWindowTransparencyPercent = Math.Clamp(settings.PinWindowTransparencyPercent, 0, 90);
     }
 }

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Application
+    x:Class="Snipping.WinUI.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls"/>
+            </ResourceDictionary.MergedDictionaries>
+
+            <!-- Tool toggle button (rect / ellipse / arrow / pen / text) -->
+            <Style x:Key="ToolBtnStyle" TargetType="ToggleButton">
+                <Setter Property="Width" Value="36"/>
+                <Setter Property="Height" Value="36"/>
+                <Setter Property="Padding" Value="0"/>
+                <Setter Property="CornerRadius" Value="4"/>
+            </Style>
+
+            <!-- Thickness toggle button -->
+            <Style x:Key="ThickBtnStyle" TargetType="ToggleButton">
+                <Setter Property="Width" Value="36"/>
+                <Setter Property="Height" Value="36"/>
+                <Setter Property="Padding" Value="0"/>
+                <Setter Property="CornerRadius" Value="4"/>
+            </Style>
+
+            <!-- Secondary action button (Copy / Save / Pin) -->
+            <Style x:Key="ActionBtnStyle" TargetType="Button">
+                <Setter Property="Height" Value="36"/>
+                <Setter Property="Padding" Value="12,0"/>
+                <Setter Property="CornerRadius" Value="4"/>
+            </Style>
+
+            <!-- Primary action button (Done) -->
+            <Style x:Key="PrimaryBtnStyle" TargetType="Button">
+                <Setter Property="Height" Value="36"/>
+                <Setter Property="Padding" Value="12,0"/>
+                <Setter Property="CornerRadius" Value="4"/>
+                <Setter Property="Background" Value="#FF0A84FF"/>
+                <Setter Property="Foreground" Value="White"/>
+            </Style>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>
