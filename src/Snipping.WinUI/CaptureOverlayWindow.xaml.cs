@@ -298,7 +298,29 @@ public sealed partial class CaptureOverlayWindow : Window
             case Windows.System.VirtualKey.M: SelectTool(ToolMosaic); e.Handled = true; break;
             case Windows.System.VirtualKey.T: SelectTool(ToolText); e.Handled = true; break;
             case Windows.System.VirtualKey.Enter: InlineDoneButton_OnClick(this, new RoutedEventArgs()); e.Handled = true; break;
+            default:
+            {
+                var colorIndex = GetColorShortcutIndex(e.Key);
+                if (colorIndex >= 0 && colorIndex < _swatches.Length)
+                {
+                    SelectSwatch(_swatches[colorIndex]);
+                    e.Handled = true;
+                }
+
+                break;
+            }
         }
+    }
+
+    private static int GetColorShortcutIndex(Windows.System.VirtualKey key)
+    {
+        if (key >= Windows.System.VirtualKey.Number1 && key <= Windows.System.VirtualKey.Number5)
+            return (int)(key - Windows.System.VirtualKey.Number1);
+
+        if (key >= Windows.System.VirtualKey.NumberPad1 && key <= Windows.System.VirtualKey.NumberPad5)
+            return (int)(key - Windows.System.VirtualKey.NumberPad1);
+
+        return -1;
     }
 
     private async Task EnterInlineEditorAsync()
@@ -473,6 +495,11 @@ public sealed partial class CaptureOverlayWindow : Window
     {
         if (sender is not Button clicked) return;
 
+        SelectSwatch(clicked);
+    }
+
+    private void SelectSwatch(Button clicked)
+    {
         if (_selectedSwatch is not null)
             _selectedSwatch.BorderThickness = new Thickness(0);
 

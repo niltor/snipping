@@ -76,6 +76,7 @@ public sealed partial class CaptureEditorWindow : Window
     {
         var window = new CaptureEditorWindow(bitmap, settings, exportManager);
         window.Activate();
+        window.RootGrid.Focus(FocusState.Programmatic);
         await window._tcs.Task;
     }
 
@@ -137,6 +138,11 @@ public sealed partial class CaptureEditorWindow : Window
     private void Swatch_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not Button clicked) return;
+        SelectSwatch(clicked);
+    }
+
+    private void SelectSwatch(Button clicked)
+    {
         // Remove selection ring from previous swatch
         if (_selectedSwatch is not null)
             _selectedSwatch.BorderThickness = new Thickness(0);
@@ -173,7 +179,32 @@ public sealed partial class CaptureEditorWindow : Window
                 ActivateTool(ToolPen); break;
             case Windows.System.VirtualKey.T when !IsModifierDown():
                 ActivateTool(ToolText); break;
+            default:
+            {
+                if (!IsModifierDown())
+                {
+                    var colorIndex = GetColorShortcutIndex(e.Key);
+                    if (colorIndex >= 0 && colorIndex < _swatches.Length)
+                    {
+                        SelectSwatch(_swatches[colorIndex]);
+                        e.Handled = true;
+                    }
+                }
+
+                break;
+            }
         }
+    }
+
+    private static int GetColorShortcutIndex(Windows.System.VirtualKey key)
+    {
+        if (key >= Windows.System.VirtualKey.Number1 && key <= Windows.System.VirtualKey.Number5)
+            return (int)(key - Windows.System.VirtualKey.Number1);
+
+        if (key >= Windows.System.VirtualKey.NumberPad1 && key <= Windows.System.VirtualKey.NumberPad5)
+            return (int)(key - Windows.System.VirtualKey.NumberPad1);
+
+        return -1;
     }
 
     private static bool IsModifierDown()

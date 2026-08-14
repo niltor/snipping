@@ -85,6 +85,50 @@ New-Item -ItemType Directory -Force -Path $assetsDirectory | Out-Null
 
 Add-Type -AssemblyName System.Drawing
 
+function Get-TransparentContentBounds {
+    param([System.Drawing.Bitmap]$Bitmap)
+
+    # Transparent artwork is already framed by its canvas. The old source
+    # artwork is opaque, so keep its legacy crop path below.
+    $corners = @(
+        $Bitmap.GetPixel(0, 0),
+        $Bitmap.GetPixel($Bitmap.Width - 1, 0),
+        $Bitmap.GetPixel(0, $Bitmap.Height - 1),
+        $Bitmap.GetPixel($Bitmap.Width - 1, $Bitmap.Height - 1)
+    )
+    if (-not ($corners | Where-Object { $_.A -lt 255 })) {
+        return $null
+    }
+
+    $left = $Bitmap.Width
+    $top = $Bitmap.Height
+    $right = -1
+    $bottom = -1
+
+    for ($y = 0; $y -lt $Bitmap.Height; $y++) {
+        for ($x = 0; $x -lt $Bitmap.Width; $x++) {
+            if ($Bitmap.GetPixel($x, $y).A -le 8) {
+                continue
+            }
+
+            $left = [Math]::Min($left, $x)
+            $top = [Math]::Min($top, $y)
+            $right = [Math]::Max($right, $x)
+            $bottom = [Math]::Max($bottom, $y)
+        }
+    }
+
+    if ($right -lt $left -or $bottom -lt $top) {
+        return $null
+    }
+
+    return [System.Drawing.Rectangle]::new(
+        $left,
+        $top,
+        $right - $left + 1,
+        $bottom - $top + 1)
+}
+
 function New-ResizedPng {
     param([string]$SourcePath, [string]$TargetPath, [int]$Size)
 
@@ -96,14 +140,35 @@ function New-ResizedPng {
         $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
         $graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
         $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
-        # The selected source artwork has a large outer margin and is slightly
-        # offset toward the lower-right. Crop around the artwork before
-        # resizing so small icons remain legible without clipping the blue mark.
-        $cropSide = [Math]::Max(1, [int][Math]::Round([Math]::Min($source.Width, $source.Height) * 0.66))
-        $cropCenterX = [int][Math]::Round($source.Width * 0.546)
-        $cropCenterY = [int][Math]::Round($source.Height * 0.516)
-        $cropX = [Math]::Max(0, [Math]::Min($source.Width - $cropSide, $cropCenterX - [int]($cropSide / 2)))
-        $cropY = [Math]::Max(0, [Math]::Min($source.Height - $cropSide, $cropCenterY - [int]($cropSide / 2)))
+        $transparentBounds = Get-TransparentContentBounds $source
+        if ($null -ne $transparentBounds) {
+            # Newer artwork is already composed on a transparent canvas. Fit
+            # the complete alpha content into a square crop with a small safe
+            # margin so Windows' small tile sizes never clip an edge.
+            $contentSide = [Math]::Max($transparentBounds.Width, $transparentBounds.Height)
+            $padding = [Math]::Max(4, [int][Math]::Ceiling($contentSide * 0.08))
+            $cropSide = [int][Math]::Min(
+                $contentSide + ($padding * 2),
+                [Math]::Min($source.Width, $source.Height))
+            $contentCenterX = $transparentBounds.X + ($transparentBounds.Width / 2.0)
+            $contentCenterY = $transparentBounds.Y + ($transparentBounds.Height / 2.0)
+            $cropX = [Math]::Max(0, [Math]::Min(
+                $source.Width - $cropSide,
+                [int][Math]::Round($contentCenterX - ($cropSide / 2.0))))
+            $cropY = [Math]::Max(0, [Math]::Min(
+                $source.Height - $cropSide,
+                [int][Math]::Round($contentCenterY - ($cropSide / 2.0))))
+        }
+        else {
+            # The original opaque artwork has a large outer margin and is
+            # slightly offset toward the lower-right. Preserve its established
+            # crop behavior while supporting transparent artwork above.
+            $cropSide = [Math]::Max(1, [int][Math]::Round([Math]::Min($source.Width, $source.Height) * 0.66))
+            $cropCenterX = [int][Math]::Round($source.Width * 0.546)
+            $cropCenterY = [int][Math]::Round($source.Height * 0.516)
+            $cropX = [Math]::Max(0, [Math]::Min($source.Width - $cropSide, $cropCenterX - [int]($cropSide / 2)))
+            $cropY = [Math]::Max(0, [Math]::Min($source.Height - $cropSide, $cropCenterY - [int]($cropSide / 2)))
+        }
         $sourceRect = [System.Drawing.Rectangle]::new($cropX, $cropY, $cropSide, $cropSide)
         $targetRect = [System.Drawing.Rectangle]::new(0, 0, $Size, $Size)
         $graphics.DrawImage($source, $targetRect, $sourceRect, [System.Drawing.GraphicsUnit]::Pixel)

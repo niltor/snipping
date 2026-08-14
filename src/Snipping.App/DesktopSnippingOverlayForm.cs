@@ -1252,6 +1252,16 @@ public sealed class DesktopSnippingOverlayForm : Form
             return;
         }
 
+        if (e.Modifiers == Keys.None)
+        {
+            var colorIndex = GetColorShortcutIndex(e.KeyCode);
+            if (colorIndex >= 0 && colorIndex < _colorBtns.Count)
+            {
+                SetColor(_colorBtns[colorIndex].IdleColor);
+                return;
+            }
+        }
+
         // Single‑key tool shortcuts
         switch (e.KeyCode)
         {
@@ -1265,6 +1275,16 @@ public sealed class DesktopSnippingOverlayForm : Form
             case Keys.D: SetTool(AnnotationTool.FreeDraw); break;
         }
     }
+
+    internal static int GetColorShortcutIndex(Keys key) => key switch
+    {
+        Keys.D1 or Keys.NumPad1 => 0,
+        Keys.D2 or Keys.NumPad2 => 1,
+        Keys.D3 or Keys.NumPad3 => 2,
+        Keys.D4 or Keys.NumPad4 => 3,
+        Keys.D5 or Keys.NumPad5 => 4,
+        _ => -1
+    };
 
     #endregion
 
