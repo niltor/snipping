@@ -46,15 +46,29 @@ $architecture = switch ($RuntimeIdentifier) {
     "win-x86" { "x86"; break }
     default { "x64" }
 }
-$sdkBinRoot = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin"
+$windowsKitBase = ${env:ProgramFiles(x86)}
+if (-not $windowsKitBase) {
+    $windowsKitBase = $env:ProgramFiles
+}
+if (-not $windowsKitBase) {
+    throw "找不到 Windows SDK 安装根目录。请安装 Windows SDK 后重试。"
+}
+
+$sdkBinRoot = Join-Path $windowsKitBase "Windows Kits\10\bin"
+if (-not (Test-Path -LiteralPath $sdkBinRoot)) {
+    throw "找不到 Windows SDK 工具目录：$sdkBinRoot。请安装 Windows SDK。"
+}
+
 $makeAppx = Get-ChildItem $sdkBinRoot -Recurse -Filter makeappx.exe |
     Where-Object { $_.DirectoryName -match "\\$architecture$" } |
     Sort-Object FullName -Descending |
     Select-Object -First 1
-$signTool = Get-ChildItem $sdkBinRoot -Recurse -Filter signtool.exe |
-    Where-Object { $_.DirectoryName -match "\\$architecture$" } |
-    Sort-Object FullName -Descending |
-    Select-Object -First 1
+$signTool = if ($Sign) {
+    Get-ChildItem $sdkBinRoot -Recurse -Filter signtool.exe |
+        Where-Object { $_.DirectoryName -match "\\$architecture$" } |
+        Sort-Object FullName -Descending |
+        Select-Object -First 1
+}
 
 if ($null -eq $makeAppx) { throw "未找到 makeappx.exe。请安装 Windows SDK。" }
 if ($Sign -and $null -eq $signTool) { throw "未找到 signtool.exe。请安装 Windows SDK。" }
