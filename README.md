@@ -16,7 +16,6 @@
 src/
   Snipping.Core/       与平台无关的核心模型和逻辑：截图结果、设置、OCR、导出
   Snipping.App/        当前正式桌面入口：WinForms 托盘、截图覆盖层、编辑器和 OCR
-  Snipping.WinUI/      独立的 WinUI 版本，使用 Snipping.WinUI.slnx 构建
   Snipping.Package/    MSIX 清单和商店图标等打包资源
 tests/
   Snipping.Core.Tests/ 核心逻辑测试
@@ -31,7 +30,7 @@ scripts/
 docs/                  功能说明、产品设计和商店发布资料
 ```
 
-默认解决方案 `Snipping.slnx` 包含正式桌面应用、核心库和测试；`Snipping.WinUI.slnx` 只包含核心库和独立的 WinUI 项目。
+默认解决方案 `Snipping.slnx` 包含正式桌面应用、核心库和测试。
 
 ## 环境要求
 

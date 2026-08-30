@@ -46,46 +46,69 @@ $architecture = switch ($RuntimeIdentifier) {
     "win-x86" { "x86"; break }
     default { "x64" }
 }
+# The package is framework-dependent, so restoring a runtime pack is
+# unnecessary. Setting the target platform still gives Windows App SDK its
+# required architecture while avoiding large RID runtime downloads.
+dotnet restore $project -p:RuntimeIdentifier= -p:Platform=$architecture -p:PlatformTarget=$architecture
+if ($LASTEXITCODE -ne 0) { throw "dotnet restore 失败。" }
+
+# Prefer a machine-wide Windows SDK, but also support the SDK BuildTools NuGet
+# package restored by WindowsSdkPackageVersion. This keeps local packaging
+# working on machines that have the .NET SDK but not the standalone Windows SDK.
+$sdkBinRoots = @()
 $windowsKitBase = ${env:ProgramFiles(x86)}
-if (-not $windowsKitBase) {
-    $windowsKitBase = $env:ProgramFiles
-}
-if (-not $windowsKitBase) {
-    throw "找不到 Windows SDK 安装根目录。请安装 Windows SDK 后重试。"
-}
-
-$sdkBinRoot = Join-Path $windowsKitBase "Windows Kits\10\bin"
-if (-not (Test-Path -LiteralPath $sdkBinRoot)) {
-    throw "找不到 Windows SDK 工具目录：$sdkBinRoot。请安装 Windows SDK。"
+if (-not $windowsKitBase) { $windowsKitBase = $env:ProgramFiles }
+if ($windowsKitBase) {
+    $installedSdkBinRoot = Join-Path $windowsKitBase "Windows Kits\10\bin"
+    if (Test-Path -LiteralPath $installedSdkBinRoot) {
+        $sdkBinRoots += $installedSdkBinRoot
+    }
 }
 
-$makeAppx = Get-ChildItem $sdkBinRoot -Recurse -Filter makeappx.exe |
-    Where-Object { $_.DirectoryName -match "\\$architecture$" } |
+$projectAssetsPath = Join-Path (Split-Path -Parent $project) "obj\project.assets.json"
+if (Test-Path -LiteralPath $projectAssetsPath) {
+    $projectAssets = Get-Content -LiteralPath $projectAssetsPath -Raw | ConvertFrom-Json
+    $buildToolsLibrary = $projectAssets.libraries.PSObject.Properties |
+        Where-Object Name -Like "Microsoft.Windows.SDK.BuildTools/*" |
+        Select-Object -First 1
+    if ($null -ne $buildToolsLibrary) {
+        foreach ($packageFolder in $projectAssets.packageFolders.PSObject.Properties.Name) {
+            $packageBinRoot = Join-Path $packageFolder (Join-Path ([string]$buildToolsLibrary.Value.path) "bin")
+            if (Test-Path -LiteralPath $packageBinRoot) {
+                $sdkBinRoots += $packageBinRoot
+            }
+        }
+    }
+}
+
+$makeAppx = $sdkBinRoots |
+    ForEach-Object { Get-ChildItem $_ -Recurse -Filter makeappx.exe -ErrorAction SilentlyContinue } |
+    Where-Object { $_.DirectoryName -match "[\\/]$architecture$" } |
     Sort-Object FullName -Descending |
     Select-Object -First 1
 $signTool = if ($Sign) {
-    Get-ChildItem $sdkBinRoot -Recurse -Filter signtool.exe |
-        Where-Object { $_.DirectoryName -match "\\$architecture$" } |
+    $sdkBinRoots |
+        ForEach-Object { Get-ChildItem $_ -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue } |
+        Where-Object { $_.DirectoryName -match "[\\/]$architecture$" } |
         Sort-Object FullName -Descending |
         Select-Object -First 1
 }
 
-if ($null -eq $makeAppx) { throw "未找到 makeappx.exe。请安装 Windows SDK。" }
-if ($Sign -and $null -eq $signTool) { throw "未找到 signtool.exe。请安装 Windows SDK。" }
+if ($null -eq $makeAppx) { throw "未找到 makeappx.exe。请安装 Windows SDK，或确保 Microsoft.Windows.SDK.BuildTools 已成功还原。" }
+if ($Sign -and $null -eq $signTool) { throw "未找到 signtool.exe。请安装 Windows SDK，或确保 Microsoft.Windows.SDK.BuildTools 已成功还原。" }
 
 New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
 if (Test-Path $publishDirectory) { Remove-Item -LiteralPath $publishDirectory -Recurse -Force }
 if (Test-Path $packageDirectory) { Remove-Item -LiteralPath $packageDirectory -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $publishDirectory, $packageDirectory | Out-Null
 
-dotnet restore $project --runtime $RuntimeIdentifier
-if ($LASTEXITCODE -ne 0) { throw "dotnet restore 失败。" }
-
 dotnet publish $project `
     --configuration $Configuration `
-    --runtime $RuntimeIdentifier `
     --self-contained false `
     --no-restore `
+    -p:RuntimeIdentifier= `
+    -p:Platform=$architecture `
+    -p:PlatformTarget=$architecture `
     -p:Version=$Version `
     -p:PublishSingleFile=false `
     -p:PublishTrimmed=false `
